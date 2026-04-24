@@ -50,7 +50,7 @@ const PIPELINE_HOVER_ZH: Record<PipelineKind, string> = {
 	wechat:
 		"公众号：读 publish_gzh，可选生图换 `[配图：…]` / `【配图提示词】` 块，上传素材并建草稿",
 	xhs:
-		"小红书：读取 xhs_content 导出卡片 PNG；若已配置发布命令且开启「外部发布」，再执行脚本（需 publish_xhs）",
+		"小红书：导出卡片 PNG；可选同步公众号图片消息草稿、再执行外部脚本（Cookie/私密 见设置，需 publish_xhs）",
 	xhsRender:
 		"仅渲染：只根据 xhs_content 导出卡片图，不执行外部发布脚本",
 	gzhToXhsCards:
@@ -437,6 +437,15 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 		}
 		if (typeof this.settings.xhsFontTtfPath !== "string") {
 			this.settings.xhsFontTtfPath = DEFAULT_SETTINGS.xhsFontTtfPath;
+		}
+		if (typeof this.settings.xhsCookie !== "string") {
+			this.settings.xhsCookie = DEFAULT_SETTINGS.xhsCookie;
+		}
+		if (typeof this.settings.xhsPublishAsPrivate !== "boolean") {
+			this.settings.xhsPublishAsPrivate = DEFAULT_SETTINGS.xhsPublishAsPrivate;
+		}
+		if (typeof this.settings.xhsWechatNewspicDraft !== "boolean") {
+			this.settings.xhsWechatNewspicDraft = DEFAULT_SETTINGS.xhsWechatNewspicDraft;
 		}
 		const egc = Number(this.settings.expandGzhTargetChars);
 		this.settings.expandGzhTargetChars = Number.isFinite(egc)

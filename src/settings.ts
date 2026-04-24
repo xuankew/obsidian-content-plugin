@@ -78,6 +78,18 @@ export interface MdToPlatformSettings {
 	/** 相对「当前笔记所在目录」的子文件夹名，如 xhs_cards、小红书卡片 */
 	xhsSaveCardsSubfolder: string;
 	xhsPublishEnabled: boolean;
+	/**
+	 * 供外部发布脚本使用（如 Playwright 登录态）。插件通过环境变量 MDT_XHS_COOKIE 传入，勿提交到仓库。
+	 */
+	xhsCookie: string;
+	/**
+	 * 为 true 时向子进程传 MDT_XHS_AS_PRIVATE=1，供自定义脚本设仅自己可见；插件本身不调用小红书官方 API。
+	 */
+	xhsPublishAsPrivate: boolean;
+	/**
+	 * 「发布小红书」渲染完成后，将 card_*.png 同步为公众号草稿中的图片消息（newspic），与公众号长文图文草稿不同。
+	 */
+	xhsWechatNewspicDraft: boolean;
 	xhsHelperCommand: string;
 	xhsHelperDryRun: boolean;
 	rulesDirOverride: string;
@@ -143,6 +155,9 @@ export const DEFAULT_SETTINGS: MdToPlatformSettings = {
 	xhsSaveCardsNextToNote: true,
 	xhsSaveCardsSubfolder: "xhs_cards",
 	xhsPublishEnabled: false,
+	xhsCookie: "",
+	xhsPublishAsPrivate: true,
+	xhsWechatNewspicDraft: false,
 	xhsHelperCommand: "",
 	xhsHelperDryRun: true,
 	rulesDirOverride: "",
@@ -640,7 +655,7 @@ export class MdToPlatformSettingTab extends PluginSettingTab {
 
 		containerEl.createEl("p", {
 			cls: "setting-item-description",
-			text: "导出 PNG 只依赖 xhs_content.md；publish_xhs.md 仅在下方「发布命令」非空且开启「启用外部发布脚本」时使用。",
+			text: "导出 PNG 只依赖 xhs_content.md；publish_xhs.md 用于封面标题与公众号图片草稿摘要。外部发布需自写脚本，Cookie 填在下方。",
 		});
 
 		new Setting(containerEl)
@@ -792,9 +807,52 @@ export class MdToPlatformSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("同步到公众号：图片消息草稿（贴图多图）")
+			.setDesc(
+				"开启后，在「发布小红书」流程中（渲染出 card_*.png 后）用同一组 AppID/Secret 调用 draft/add，类型为 newspic，与长文「图文」草稿不同。需已配置公众号凭据。",
+			)
+			.addToggle((tg) =>
+				tg
+					.setValue(this.plugin.settings.xhsWechatNewspicDraft)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsWechatNewspicDraft = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("小红书登录 Cookie（可选）")
+			.setDesc(
+				"供下方外部脚本使用；插件会设环境变量 MDT_XHS_COOKIE（与发布命令、私密开关等一起传递）。本机 Obsidian 配置中保存，勿泄露。",
+			)
+			.addText((t) =>
+				t
+					.setPlaceholder("由浏览器登录后复制（脚本自行消费）")
+					.setValue(this.plugin.settings.xhsCookie)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsCookie = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("外部脚本：以「仅自己可见/私密」发布")
+			.setDesc(
+				"开启时传 MDT_XHS_AS_PRIVATE=1；是否生效取决于你写的发布脚本如何解析。",
+			)
+			.addToggle((tg) =>
+				tg
+					.setValue(this.plugin.settings.xhsPublishAsPrivate)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsPublishAsPrivate = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
 			.setName("启用外部发布脚本")
 			.setDesc(
-				"开启且「发布命令」非空时，渲染完 PNG 后执行脚本，并需能定位 publish_xhs.md。仅导出图片可不开启。",
+				"开启且「发布命令」非空时，渲染完 PNG 后执行脚本，并需能定位 publish_xhs.md。仅导出图片或仅同步微信可不开启。",
 			)
 			.addToggle((tg) =>
 				tg.setValue(this.plugin.settings.xhsPublishEnabled).onChange(async (v) => {
@@ -806,7 +864,7 @@ export class MdToPlatformSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("发布命令")
 			.setDesc(
-				"例如：node /path/to/publish.js。会传 MDT_XHS_IMAGES_DIR、MDT_PUBLISH_XHS（publish_xhs.md 绝对路径）、MDT_VAULT_ROOT。留空则只生成 PNG，不执行脚本。",
+				"例如：node /path/to/publish.js。会传 MDT_XHS_IMAGES_DIR、MDT_PUBLISH_XHS、MDT_VAULT_ROOT、MDT_DRY_RUN、MDT_XHS_AS_PRIVATE，若填写了 Cookie 则还有 MDT_XHS_COOKIE。留空则只生成 PNG（可仍开「同步公众号图片草稿」）。",
 			)
 			.addText((t) =>
 				t

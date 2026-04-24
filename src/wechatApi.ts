@@ -126,7 +126,35 @@ export async function addMaterialThumb(
 	throw new Error(data2.errmsg || data.errmsg || "add_material 失败");
 }
 
-export interface DraftArticle {
+/** 永久素材：`type=image`，用于图片消息草稿 `newspic` 的正文多图 */
+export async function addMaterialImage(
+	accessToken: string,
+	imageBuffer: Buffer,
+	filename: string,
+): Promise<string> {
+	const boundary = `mdtp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+	const url = `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${encodeURIComponent(accessToken)}&type=image`;
+	let res;
+	try {
+		res = await requestUrl({
+			url,
+			method: "POST",
+			headers: {
+				"Content-Type": `multipart/form-data; boundary=${boundary}`,
+			},
+			body: buildMediaMultipartBody(boundary, filename, imageBuffer),
+			throw: false,
+		});
+	} catch (e) {
+		throw wxNetError("上传图片素材 add_material(image)", e);
+	}
+	const data = res.json as { media_id?: string; errcode?: number; errmsg?: string };
+	if (data.media_id) return data.media_id;
+	throw new Error(data.errmsg || `add_material(image) 失败 errcode=${data.errcode}`);
+}
+
+/** 图文草稿（默认 news） */
+export interface DraftNewsArticle {
 	title: string;
 	author: string;
 	digest: string;
@@ -134,9 +162,31 @@ export interface DraftArticle {
 	thumb_media_id: string;
 }
 
+/**
+ * 图片消息草稿（贴图/多图），见
+ * https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html
+ * `article_type: newspic`，与长文 `news` 在后台展示不同。
+ */
+export interface DraftNewspicArticle {
+	article_type: "newspic";
+	title: string;
+	/** 纯文本为主；必填，可短 */
+	content: string;
+	need_open_comment?: number;
+	only_fans_can_comment?: number;
+	image_info: {
+		image_list: { image_media_id: string }[];
+	};
+}
+
+export type DraftArticlePayload = DraftNewsArticle | DraftNewspicArticle;
+
+/** @deprecated 请用 {@link DraftNewsArticle} */
+export type DraftArticle = DraftNewsArticle;
+
 export async function addDraft(
 	accessToken: string,
-	articles: DraftArticle[],
+	articles: DraftArticlePayload[],
 ): Promise<{ media_id: string }> {
 	const url = `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(accessToken)}`;
 	const payload = JSON.stringify({ articles });
