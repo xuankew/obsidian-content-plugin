@@ -1,0 +1,9 @@
+{
+	"id": "md-to-platform",
+	"name": "MD to Platform",
+	"version": "0.1.0",
+	"minAppVersion": "1.5.0",
+	"description": "扩写；公众号草稿（智谱/方舟插图+花生排版）；小红书卡片；文→卡；Baoyu 配图；Seedance；视频号分片上传",
+	"author": "",
+	"isDesktopOnly": true
+}

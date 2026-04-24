@@ -1,0 +1,19 @@
+node_modules/
+main.js
+main.js.map
+.DS_Store
+
+# 本地环境变量与密钥样例
+.env
+.env.*
+!.env.example
+
+# 若曾在仓库根调试 Obsidian 插件 data
+data.json
+scripts/wechat-local-preview.cjs
+scripts/repro-user-md.cjs
+scripts/debug-wechat-list.cjs
+
+fixtures/
+
+.cursor
