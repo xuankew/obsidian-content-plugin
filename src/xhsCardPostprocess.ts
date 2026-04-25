@@ -2,6 +2,12 @@
  * 小红书卡片正文预处理：去尾图话题、解析封面文案（对齐 Auto-Redbook cover.html 字段）。
  */
 
+import {
+	stripLeadingEnumerationFromXhsTitle,
+	toPlainTitleForPlatformDrafts,
+} from "./plainTitle";
+export { stripLeadingEnumerationFromXhsTitle, toPlainTitleForPlatformDrafts };
+
 /** 行是否仅由 # 话题 构成（支持全角＃、多空格、NBSP） */
 function isHashtagOnlyLine(line: string): boolean {
 	const t = line.replace(/\u00a0/g, " ").trim();
@@ -59,7 +65,7 @@ export function sanitizeLastCardForImage(markdown: string): string {
 	return lines.join("\n").trimEnd();
 }
 
-/** 从 publish_xhs 取标题候选；否则用首张卡片首行兜底 */
+/** 从 publish_xhs 取标题候选；否则用首张卡片首行兜底（与公众号/发笔记：纯文字标题、无行首「1、」等） */
 export function extractXhsCoverFields(
 	publishMd: string | null,
 	firstCardSnippet: string,
@@ -70,9 +76,9 @@ export function extractXhsCoverFields(
 
 	if (publishMd && publishMd.trim()) {
 		const t1 = publishMd.match(/标题\s*[1１一]\s*[：:]\s*(.+)/u);
-		if (t1) title = t1[1].trim();
+		if (t1) title = toPlainTitleForPlatformDrafts(t1[1].trim());
 		const t2 = publishMd.match(/标题\s*[2２二]\s*[：:]\s*(.+)/u);
-		if (t2) subtitle = t2[1].trim();
+		if (t2) subtitle = toPlainTitleForPlatformDrafts(t2[1].trim());
 	}
 
 	if (!title) {
@@ -81,15 +87,18 @@ export function extractXhsCoverFields(
 				.split("\n")
 				.map((l) => l.trim())
 				.find((l) => l.length > 0) ?? "";
-		title = line
-			.replace(/\*\*/g, "")
+		const raw = line
 			.replace(/^#{1,6}\s+/, "")
 			.replace(/^>\s*/, "")
 			.trim();
-		if (title.length > 22) title = `${title.slice(0, 21)}…`;
+		title = toPlainTitleForPlatformDrafts(raw);
+		const tChars = [...title];
+		if (tChars.length > 22) title = `${tChars.slice(0, 21).join("")}…`;
 	}
+	title = toPlainTitleForPlatformDrafts(title);
 	if (!title) title = "笔记";
 
+	subtitle = toPlainTitleForPlatformDrafts(subtitle);
 	if (!subtitle) subtitle = "核心要点 · 建议收藏";
 
 	let emoji = emojiDefault;
@@ -102,4 +111,55 @@ export function extractXhsCoverFields(
 	if (!title) title = "笔记";
 
 	return { title, subtitle, emoji };
+}
+
+/**
+ * 将卡片 / 发布正文的轻量 Markdown 压成纯文字（供微信图片消息 `content` 等）。
+ */
+export function plainTextFromXhsMarkdown(markdown: string): string {
+	let t = markdown
+		.replace(/```[\s\S]*?```/g, " ")
+		.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+		.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+	t = t.replace(/\*\*([^*]+)\*\*/g, "$1");
+	t = t.replace(/^#{1,6}\s+/gm, "");
+	t = t.replace(/^>\s?/gm, "");
+	t = t.replace(/^\s*[-*+]\s+/gm, "• ");
+	t = t.replace(/\s+/g, " ");
+	return t.trim();
+}
+
+const WECHAT_NEWSPIC_BODY_MAX = 12_000;
+
+/**
+ * 公众号 `newspic` 草稿的正文：优先 `publish_xhs.md` 的 `## 发布正文` 段；否则标题2 一行；再否则首张卡片段。避免仅用封面副标题「核心要点·建议收藏」过短。
+ */
+export function extractXhsWechatNewspicBodyText(
+	publishMd: string | null,
+	firstCardMarkdown: string,
+): string {
+	const raw = (publishMd ?? "").trim();
+	if (raw) {
+		const bodySec = raw.match(
+			/(?:^|\n)##\s*发布正文[^\n]*\n+([\s\S]+?)(?=\n##\s|\Z)/m,
+		);
+		if (bodySec?.[1]?.trim()) {
+			const plain = plainTextFromXhsMarkdown(bodySec[1].trim());
+			if (plain) return sliceBody(plain);
+		}
+		const t2 = raw.match(/标题\s*[2２二]\s*[：:]\s*(.+?)(?:\n|$)/u);
+		if (t2?.[1]?.trim()) {
+			const plain = plainTextFromXhsMarkdown(t2[1].trim());
+			if (plain) return sliceBody(plain);
+		}
+	}
+	const fromCard = plainTextFromXhsMarkdown(firstCardMarkdown);
+	if (fromCard) return sliceBody(fromCard);
+	return " ";
+}
+
+function sliceBody(s: string): string {
+	const arr = Array.from(s);
+	if (arr.length <= WECHAT_NEWSPIC_BODY_MAX) return s;
+	return `${arr.slice(0, WECHAT_NEWSPIC_BODY_MAX - 1).join("")}…`;
 }

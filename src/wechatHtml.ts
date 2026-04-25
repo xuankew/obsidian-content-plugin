@@ -2,6 +2,7 @@ import { parseHTML } from "linkedom";
 import { HUASHENG_STYLES } from "./huasheng/stylesData";
 import { renderHuashengWechatHtml } from "./huasheng/renderHuashengWechat";
 import { stripWechatImagePlaceholderTextForDigest } from "./wechatImagePlaceholders";
+import { toPlainTitleForPlatformDrafts } from "./plainTitle";
 
 /** 公众号 sanitize 用：Obsidian 有 DOMParser；无则用 linkedom，避免展平/删空 li 整段被跳过。 */
 function mutateWechatHtmlInFragment(
@@ -569,13 +570,13 @@ function normalizeWechatArticleImagesForMobile(html: string): string {
 }
 
 /**
- * 与 {@link extractTitle} 一致：仅从「首行」得到草稿标题字符串（用于比对是否重复）。
+ * 从首行得到标题内容（去掉 # 号，长度不限）；纯文字与截断由 {@link extractTitle} / {@link toPlainTitleForPlatformDrafts} 完成。
  */
-function titleStringFromFirstLine(firstLine: string): string {
+function titleContentFromFirstLine(firstLine: string): string {
 	const t = firstLine.trim();
 	const hm = t.match(/^#{1,6}\s+(.+)$/);
-	if (hm) return hm[1]!.trim().slice(0, 64);
-	return t.slice(0, 64);
+	if (hm) return hm[1]!.trim();
+	return t;
 }
 
 /**
@@ -593,8 +594,11 @@ export function stripLeadingTitleHeadingFromMarkdown(
 	while (idx < lines.length && lines[idx]!.trim() === "") idx++;
 	if (idx >= lines.length) return markdown;
 
-	const firstLineTitle = titleStringFromFirstLine(lines[idx]!);
-	if (firstLineTitle !== articleTitle) return markdown;
+	const firstLineTitle = toPlainTitleForPlatformDrafts(
+		titleContentFromFirstLine(lines[idx]!),
+	);
+	const articleTitlePlain = toPlainTitleForPlatformDrafts(articleTitle);
+	if (firstLineTitle !== articleTitlePlain) return markdown;
 
 	lines.splice(idx, 1);
 	while (idx < lines.length && lines[idx]!.trim() === "") {
@@ -608,10 +612,79 @@ export function markdownToWechatHtml(body: string, theme: string): string {
 	return renderHuashengWechatHtml(body, normalizeWechatTheme(theme));
 }
 
+const WECHAT_DRAFT_TITLE_MAX = 64;
+
+const RE_GZH_TITLE_CANDIDATE_HEADING = /^#{1,6}\s*标题候选\s*$/i;
+
+/**
+ * 从 `publish_gzh` 的 `# 标题候选` 块中取**第一条**（`1.…` / `1、…` 等，默认用第一条为草稿标题）。
+ * 无该块或无数「1.」时返回 `null`。
+ */
+export function extractFirstTitleFromGzhTitleCandidates(
+	markdown: string,
+): string | null {
+	const lines = markdown.split(/\r?\n/);
+	let i = 0;
+	while (i < lines.length && lines[i]!.trim() === "") i++;
+	if (i >= lines.length) return null;
+	if (!RE_GZH_TITLE_CANDIDATE_HEADING.test(lines[i]!.trim())) return null;
+	for (i = i + 1; i < lines.length; i++) {
+		const t = lines[i]!.trim();
+		if (t === "---" || /^#{1,6}\s*正文\s*$/i.test(t)) break;
+		const m = t.match(/^\s*[1１]\s*[\..．、:：]\s*(.+)$/u);
+		if (m) return m[1]!.trim();
+	}
+	return null;
+}
+
+/**
+ * 推送前从正文中删除「标题候选」区块（`# 标题候选` 至 `---` 或 `# 正文`），
+ * 并去掉其后的单独一行 `# 正文`，避免进草稿箱 HTML。
+ */
+export function stripGzhTitleCandidatePreamble(markdown: string): string {
+	const lines = markdown.split(/\r?\n/);
+	let i = 0;
+	while (i < lines.length && lines[i]!.trim() === "") i++;
+	if (i >= lines.length) return markdown;
+	if (!RE_GZH_TITLE_CANDIDATE_HEADING.test(lines[i]!.trim())) {
+		return markdown;
+	}
+	i++;
+	while (i < lines.length) {
+		const t = lines[i]!.trim();
+		if (t === "---") {
+			i++;
+			break;
+		}
+		if (/^#{1,6}\s*正文\s*$/i.test(t)) {
+			i++;
+			break;
+		}
+		i++;
+	}
+	while (i < lines.length && lines[i]!.trim() === "") i++;
+	if (i < lines.length && /^#{1,6}\s*正文\s*$/i.test(lines[i]!.trim())) {
+		i++;
+	}
+	return lines.slice(i).join("\n").replace(/^\n+/, "");
+}
+
 export function extractTitle(markdown: string): string {
-	const first = markdown.split(/\r?\n/).find((l) => l.trim().length > 0);
-	if (!first) return "未命名";
-	return titleStringFromFirstLine(first);
+	let raw = extractFirstTitleFromGzhTitleCandidates(markdown);
+	if (!raw) {
+		const stripped = stripGzhTitleCandidatePreamble(markdown);
+		const first = stripped.split(/\r?\n/).find((l) => l.trim().length > 0);
+		raw = first ? titleContentFromFirstLine(first) : "";
+	}
+	if (!raw) {
+		const first = markdown.split(/\r?\n/).find((l) => l.trim().length > 0);
+		raw = first ? titleContentFromFirstLine(first) : "";
+	}
+	const plain = toPlainTitleForPlatformDrafts(raw);
+	if (!plain) return "未命名";
+	const arr = Array.from(plain);
+	if (arr.length <= WECHAT_DRAFT_TITLE_MAX) return plain;
+	return `${arr.slice(0, WECHAT_DRAFT_TITLE_MAX - 1).join("")}…`;
 }
 
 export function extractDigest(markdown: string, maxLen = 120): string {
@@ -639,7 +712,8 @@ export function pipelineMarkdownForWechatRender(
 	options?: PipelineMarkdownForWechatOptions,
 ): string {
 	const title = options?.titleForStrip ?? extractTitle(markdown);
-	let md = stripZeroWidthOutsideCodeBlocks(markdown);
+	let md = stripGzhTitleCandidatePreamble(markdown);
+	md = stripZeroWidthOutsideCodeBlocks(md);
 	md = mergeParenLineAfterListItemForWechat(md);
 	md = mergeFlushTailAfterListItemForWechat(md);
 	md = mergeListItemContinuationsForWechat(md);

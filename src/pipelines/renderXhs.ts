@@ -7,7 +7,6 @@ import MarkdownIt from "markdown-it";
 import type { MdToPlatformPlugin } from "../pluginTypes";
 import {
 	readXhsContentWithFallback,
-	removeSandboxXhsMarkdownTmp,
 	resolveXhsCardImagesFsDir,
 	tryReadPublishXhsWithFallback,
 } from "../noteArtifacts";
@@ -287,7 +286,6 @@ export async function runRenderXhsPipeline(
 				0.45,
 				false,
 			);
-			await removeSandboxXhsMarkdownTmp(plugin, file);
 			if (!opts?.suppressNotice) {
 				new Notice(`已复用 ${parts.length} 张卡片：${outDir}`);
 			}
@@ -486,8 +484,6 @@ export async function runRenderXhsPipeline(
 			progress.setPhase("已完成", 1, false);
 			await new Promise((r) => setTimeout(r, 280));
 		}
-
-		await removeSandboxXhsMarkdownTmp(plugin, file);
 
 		if (!opts?.suppressNotice) {
 			const cov = plugin.settings.xhsCoverEnabled ? "、cover.png" : "";

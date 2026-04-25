@@ -5,6 +5,7 @@ import {
 	normalizeWechatCoverBgPreset,
 } from "./wechatCoverThumb";
 import { XHS_THEME_OPTIONS, normalizeXhsTheme } from "./xhsThemes";
+import { getXhsEnvStatus, ensureXhsVenvInstalled } from "./xhsEnv";
 
 export type LlmProvider = "deepseek" | "zhipu" | "openai-compatible";
 
@@ -90,6 +91,17 @@ export interface MdToPlatformSettings {
 	 * 「发布小红书」渲染完成后，将 card_*.png 同步为公众号草稿中的图片消息（newspic），与公众号长文图文草稿不同。
 	 */
 	xhsWechatNewspicDraft: boolean;
+	/**
+	 * 未填写「发布命令」时，若开启则自动使用插件目录下 `scripts/publish_xhs_redbook.py`（需本机 Python 3 与 pip 依赖）。
+	 */
+	xhsUseBundledRedbookPublish: boolean;
+	/**
+	 * 用于执行 `publish_xhs_redbook.py` 的 Python 可执行文件绝对路径（如 Apple Silicon 常填 `/opt/homebrew/bin/python3`）。
+	 * 留空则自动尝试该路径、再退回 `python3`；图形界面启动的 Obsidian 常找不到你在终端里 pip 装包的那个解释器，填此可一次对齐。
+	 */
+	xhsPythonPath: string;
+	/** 发布小红书前若依赖未装，自动尝试创建 venv 并安装（联网 pip） */
+	xhsAutoInstallDeps: boolean;
 	xhsHelperCommand: string;
 	xhsHelperDryRun: boolean;
 	rulesDirOverride: string;
@@ -158,6 +170,9 @@ export const DEFAULT_SETTINGS: MdToPlatformSettings = {
 	xhsCookie: "",
 	xhsPublishAsPrivate: true,
 	xhsWechatNewspicDraft: false,
+	xhsUseBundledRedbookPublish: true,
+	xhsPythonPath: "",
+	xhsAutoInstallDeps: true,
 	xhsHelperCommand: "",
 	xhsHelperDryRun: true,
 	rulesDirOverride: "",
@@ -862,13 +877,98 @@ export class MdToPlatformSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("发布命令")
+			.setName("无自定义命令时使用内置发布脚本")
 			.setDesc(
-				"例如：node /path/to/publish.js。会传 MDT_XHS_IMAGES_DIR、MDT_PUBLISH_XHS、MDT_VAULT_ROOT、MDT_DRY_RUN、MDT_XHS_AS_PRIVATE，若填写了 Cookie 则还有 MDT_XHS_COOKIE。留空则只生成 PNG（可仍开「同步公众号图片草稿」）。",
+				"开启且「发布命令」留空时，用插件同目录的 scripts/publish_xhs_redbook.py（衍自 Auto-Redbook-Skills）。需本机 Python 与 pip install xhs（见下方「Python 解释器」）。填写「发布命令」时以您填的为准。",
+			)
+			.addToggle((tg) =>
+				tg
+					.setValue(this.plugin.settings.xhsUseBundledRedbookPublish)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsUseBundledRedbookPublish = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Python 解释器（发布小红书，可选）")
+			.setDesc(
+				"填**能运行发布脚本**的 python 绝对路径。若本机已执行 npm run bundle:xhs-embed 在 scripts/xhs_bundles/ 生成了本机平台子目录，插件会自动 PYTHONPATH 加载 xhs，不必在系统里 pip。否则可用 bash scripts/bootstrap_xhs_venv.sh 建 venv 后指到 …/xhs_venv/bin/python3。留空时 mac 会试 /opt/homebrew/bin/python3。",
 			)
 			.addText((t) =>
 				t
-					.setPlaceholder("node .../publish_xhs.js")
+					.setPlaceholder("…/scripts/xhs_venv/bin/python3 或 /opt/homebrew/…/python3.13")
+					.setValue(this.plugin.settings.xhsPythonPath)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsPythonPath = v.trim();
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("发布前自动安装依赖（推荐）")
+			.setDesc(
+				"首次发布或依赖损坏时，自动创建独立 venv 并从 PyPI 安装 xhs（不污染系统 Python，绕过 Homebrew PEP 668）。关闭后需手动点下方按钮。",
+			)
+			.addToggle((tg) =>
+				tg
+					.setValue(this.plugin.settings.xhsAutoInstallDeps)
+					.onChange(async (v) => {
+						this.plugin.settings.xhsAutoInstallDeps = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		const envInfo = containerEl.createEl("p", {
+			cls: "setting-item-description",
+			text: "小红书发布环境：正在检测…",
+		});
+		void (async () => {
+			try {
+				const st = await getXhsEnvStatus(this.plugin, this.plugin.settings.xhsPythonPath);
+				const py =
+					st.python?.ok
+						? `${st.python.executable}（${st.python.version}）`
+						: "未检测到可用 Python 3";
+				const venv = st.hasVenv ? "已创建" : "未创建";
+				const xhsOk = st.canImportXhs ? "OK" : "缺少 xhs";
+				envInfo.textContent =
+					`小红书发布环境：Python=${py}；venv=${venv}（${st.venvDir}）；依赖=${xhsOk}`;
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				envInfo.textContent = `小红书发布环境：检测失败：${msg}`;
+			}
+		})();
+
+		new Setting(containerEl)
+			.setName("一键安装/修复发布依赖（xhs）")
+			.setDesc("会在库内 `.obsidian/mdtp/xhs_venv` 创建 venv 并安装依赖；安装过程会联网。")
+			.addButton((b) =>
+				b.setButtonText("安装/修复").onClick(async () => {
+					new Notice("开始安装/修复小红书依赖（xhs）…", 6000);
+					try {
+						await ensureXhsVenvInstalled(this.plugin, this.plugin.settings.xhsPythonPath, {
+							onLog: (s) => console.info("[md-to-platform] xhs env", s),
+						});
+						new Notice("小红书依赖已就绪：可在「发布小红书」中直接使用", 8000);
+					} catch (e) {
+						const msg = e instanceof Error ? e.message : String(e);
+						new Notice(`安装失败：${msg}（详见 Console）`, 12000);
+						console.error("[md-to-platform] xhs env install failed", e);
+					} finally {
+						this.display();
+					}
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("发布命令（可选，覆盖内置）")
+			.setDesc(
+				"非空时优先于内置脚本。例：node …/publish_xhs_stub.js 或自定义路径。会传 MDT_XHS_IMAGES_DIR、MDT_PUBLISH_XHS、MDT_VAULT_ROOT、MDT_DRY_RUN、MDT_XHS_AS_PRIVATE，有 Cookie 时还有 MDT_XHS_COOKIE。",
+			)
+			.addText((t) =>
+				t
+					.setPlaceholder("留空=尝试内置 python3 scripts/publish_xhs_redbook.py")
 					.setValue(this.plugin.settings.xhsHelperCommand)
 					.onChange(async (v) => {
 						this.plugin.settings.xhsHelperCommand = v.trim();

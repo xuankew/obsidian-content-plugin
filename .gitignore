@@ -16,4 +16,12 @@ scripts/debug-wechat-list.cjs
 
 fixtures/
 
+# 本机执行 bootstrap_xhs_venv.sh 后生成的 venv，勿提交
+scripts/xhs_venv/
+python/xhs_venv/
+
+# 本机执行 bundle_xhs_pip_target.mjs 后的 pip --target 产物，勿提交
+scripts/xhs_bundles/*/
+!scripts/xhs_bundles/README.md
+
 .cursor

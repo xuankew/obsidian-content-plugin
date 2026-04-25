@@ -1,0 +1,10 @@
+# 与 Obsidian 插件 + publish_xhs_redbook.py 配合
+#
+# 仅在本机用「发布小红书」+ 设置里已填 Cookie 时，最低需要：
+#   xhs
+#
+# 其余为可选：python-dotenv 仅在你用 .env 且想自动解析时；requests 仅 --api-mode
+
+xhs
+python-dotenv
+requests

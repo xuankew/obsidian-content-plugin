@@ -26,6 +26,7 @@ import {
 	extractDigest,
 	sanitizeWechatArticleHtmlForMpEditor,
 	pipelineMarkdownForWechatRender,
+	stripGzhTitleCandidatePreamble,
 } from "../wechatHtml";
 import {
 	getAccessToken,
@@ -224,8 +225,11 @@ export async function runPublishWechatPipeline(
 			},
 		);
 
+		const draftTitle = extractTitle(mdStrip);
+		const mdForDigest = stripGzhTitleCandidatePreamble(mdWithWxImages);
+
 		let mdForRender = pipelineMarkdownForWechatRender(mdWithWxImages, {
-			titleForStrip: extractTitle(mdStrip),
+			titleForStrip: draftTitle,
 		});
 
 		progress.setPhase("正在渲染公众号 HTML（花生排版）…", 0.78, true);
@@ -235,8 +239,8 @@ export async function runPublishWechatPipeline(
 		htmlOut = await sweepHtmlFileImageSrcs(htmlOut, tok);
 		writeFileUtf8(path.join(cacheDir, "wechat_article.html"), htmlOut);
 
-		const title = extractTitle(mdStrip);
-		const digest = extractDigest(mdStrip);
+		const title = draftTitle;
+		const digest = extractDigest(mdForDigest);
 
 		let thumbBytes: Buffer;
 		if (plugin.settings.wechatThumbSource === "titleCard") {

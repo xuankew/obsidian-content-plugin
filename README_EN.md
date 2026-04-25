@@ -166,7 +166,9 @@ IP allowlisting is often required; home broadband IP changes can cause intermitt
 
 - **Card delimiter (regex)**, **theme / width / height / DPR / dynamic height**.
 - **Save next to note**: only when **writing workflow is off**; when **on**, PNG dir is fixed under `Published/xhs/<session>/`.
-- **External publish command**, **dry-run**: env vars `MDT_PUBLISH_XHS`, `MDT_XHS_IMAGES_DIR`, `MDT_VAULT_ROOT`, `MDT_DRY_RUN` (same as `scripts/publish_xhs_stub.js`).
+- **Built-in publish script** (default on when custom command is empty): `scripts/publish_xhs_redbook.py`, aligned with [Auto-Redbook-Skills `publish_xhs.py`](https://github.com/comeonzhj/Auto-Redbook-Skills/blob/main/scripts/publish_xhs.py) plus **MDT env-only** mode. **Homebrew Python** may block `pip install` (PEP 668); use `bash scripts/bootstrap_xhs_venv.sh` in the plugin root, then set **Python interpreter** to `scripts/xhs_venv/bin/python3`. **Enable external publish** must be on to run the script after render.
+- **Custom command** overrides the built-in launcher.
+- **dry-run** and env vars: `MDT_PUBLISH_XHS`, `MDT_XHS_IMAGES_DIR`, `MDT_VAULT_ROOT`, `MDT_DRY_RUN`, `MDT_XHS_COOKIE`, `MDT_XHS_AS_PRIVATE` (see `scripts/publish_xhs_stub.js` and README).
 
 ### Other
 

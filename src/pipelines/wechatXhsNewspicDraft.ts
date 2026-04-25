@@ -10,7 +10,11 @@ import type { MdToPlatformSettings } from "../settings";
 import type { MdToPlatformPlugin } from "../pluginTypes";
 import { getAccessToken, addMaterialImage, addDraft, type DraftNewspicArticle } from "../wechatApi";
 import { tryReadPublishXhsWithFallback, readXhsContentWithFallback } from "../noteArtifacts";
-import { extractXhsCoverFields } from "../xhsCardPostprocess";
+import { toPlainTitleForPlatformDrafts } from "../plainTitle";
+import {
+	extractXhsCoverFields,
+	extractXhsWechatNewspicBodyText,
+} from "../xhsCardPostprocess";
 
 let cachedToken: { token: string; exp: number } | null = null;
 
@@ -77,8 +81,13 @@ export async function pushXhsCardImagesToWechatNewspicDraft(
 	const firstCard = (parts[0] ?? raw).trim();
 
 	const publishMd = await tryReadPublishXhsWithFallback(plugin, file);
-	const { title, subtitle } = extractXhsCoverFields(publishMd, firstCard);
-	const titleWx = sliceGzhTitle(title, 32);
+	const { title } = extractXhsCoverFields(publishMd, firstCard);
+	const titleWx =
+		sliceGzhTitle(toPlainTitleForPlatformDrafts(title), 32) || "笔记";
+	const content = extractXhsWechatNewspicBodyText(
+		publishMd,
+		firstCard,
+	).trim() || " ";
 
 	const access = await wechatAccessToken(plugin);
 	const image_list: { image_media_id: string }[] = [];
@@ -88,7 +97,6 @@ export async function pushXhsCardImagesToWechatNewspicDraft(
 		image_list.push({ image_media_id: mid });
 	}
 
-	const content = (subtitle && subtitle.trim()) || " ";
 	const article: DraftNewspicArticle = {
 		article_type: "newspic",
 		title: titleWx,

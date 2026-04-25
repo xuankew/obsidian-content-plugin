@@ -249,7 +249,9 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 			}
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
-			new Notice(`MDTP：${msg}`, 12000);
+			const cap = 3500;
+			const out = msg.length > cap ? `${msg.slice(0, cap)}…[完整见 Console]` : msg;
+			new Notice(`MDTP：${out}`, 12000);
 			console.error(`${LOG_PREFIX} pipeline 错误`, kind, file.path, e);
 		}
 	}
@@ -446,6 +448,16 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 		}
 		if (typeof this.settings.xhsWechatNewspicDraft !== "boolean") {
 			this.settings.xhsWechatNewspicDraft = DEFAULT_SETTINGS.xhsWechatNewspicDraft;
+		}
+		if (typeof this.settings.xhsUseBundledRedbookPublish !== "boolean") {
+			this.settings.xhsUseBundledRedbookPublish =
+				DEFAULT_SETTINGS.xhsUseBundledRedbookPublish;
+		}
+		if (typeof this.settings.xhsPythonPath !== "string") {
+			this.settings.xhsPythonPath = DEFAULT_SETTINGS.xhsPythonPath;
+		}
+		if (typeof this.settings.xhsAutoInstallDeps !== "boolean") {
+			this.settings.xhsAutoInstallDeps = DEFAULT_SETTINGS.xhsAutoInstallDeps;
 		}
 		const egc = Number(this.settings.expandGzhTargetChars);
 		this.settings.expandGzhTargetChars = Number.isFinite(egc)

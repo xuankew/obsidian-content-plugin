@@ -400,7 +400,7 @@ export function resolveBaoyuCogviewImagesFsDir(
 	return abs;
 }
 
-/** 公众号草稿推送成功后：删除 Sandbox 中公众号相关 tmp（含 wechat 中间文件与 Sandbox 内 publish_gzh.md）。 */
+/** 公众号草稿推送成功后：仅删除 Sandbox 中**公众号**相关 tmp（wechat_images、带图稿 html 等），不删 xhs 文件。 */
 export async function removeSandboxWechatTmp(
 	plugin: MdToPlatformPlugin,
 	note: TFile,
@@ -433,7 +433,7 @@ export async function removeSandboxWechatTmp(
 	}
 }
 
-/** 小红书卡片生成成功后：删除 Sandbox 中的 publish_xhs / xhs_content tmp。 */
+/** 小红书**发笔记脚本成功**（非 dry-run）后：删除 Sandbox 中 publish_xhs / xhs_content tmp；仅渲染 PNG 不调用。 */
 export async function removeSandboxXhsMarkdownTmp(
 	plugin: MdToPlatformPlugin,
 	note: TFile,

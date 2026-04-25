@@ -7,6 +7,8 @@
     "build": "node esbuild.config.mjs",
     "dev": "node esbuild.config.mjs --watch",
     "vendor:wenkai": "node scripts/fetch-lxgw-wenkai.mjs",
+    "xhs:venv": "bash scripts/bootstrap_xhs_venv.sh",
+    "bundle:xhs-embed": "node scripts/bundle_xhs_pip_target.mjs",
     "wechat:preview": "esbuild scripts/wechat-local-preview.ts --bundle --platform=node --packages=external --outfile=scripts/wechat-local-preview.cjs --format=cjs && node scripts/wechat-local-preview.cjs"
   },
   "keywords": [
