@@ -37,10 +37,10 @@ const md = new MarkdownIt({ breaks: true, linkify: true });
 
 /**
  * 与 Auto-Redbook-Skills `scripts/render_xhs.js` 一致：外层渐变 + 内层毛玻璃，正文样式来自 `assets/themes/<theme>.css`（合并为 AUTO_REDBOOK_THEME_RAW）。
- * 外层 padding 50px、内层 padding 60px、圆角 20px。
+ * 外层 / 内层 padding：略收紧以多装正文；段落间距主要靠 TYPO_BOOST 控制。
  */
-const XHS_OUTER_PAD_PX = 50;
-const XHS_INNER_PAD_PX = 60;
+const XHS_OUTER_PAD_PX = 46;
+const XHS_INNER_PAD_PX = 54;
 const XHS_INNER_RADIUS_PX = 20;
 
 /** 对齐 `render_xhs.js` 中 `.card-inner` 的基础层（各主题 CSS 可覆盖 background 等） */
@@ -62,7 +62,9 @@ const XHS_AUTO_REDBOOK_INNER_CSS = `
 .mdtp-xhs-card-content{box-sizing:border-box;margin:0;padding:0}
 `;
 
-/** 强化层级：与主题 CSS 叠加，保证标题/粗体与正文拉开对比（Shadow 内仅主题表，可放心用 !important） */
+/**
+ * 强化层级 + **压紧垂直间距**。主题里 p/h 多为固定 px 且无 !important，此处统一覆盖，减少段落间空档、避免固定高度卡片底部被裁切。
+ */
 const XHS_MARKDOWN_TYPO_BOOST = `
 .mdtp-xhs-card-content strong,
 .mdtp-xhs-card-content b {
@@ -75,26 +77,55 @@ const XHS_MARKDOWN_TYPO_BOOST = `
 	font-weight: 800 !important;
 	letter-spacing: 0.02em;
 }
-.mdtp-xhs-card-content h2 {
-	margin-top: 0.08em !important;
-	margin-bottom: 0.45em !important;
-}
-.mdtp-xhs-card-content h3 {
-	margin-top: 0.12em !important;
-	margin-bottom: 0.35em !important;
-}
 .mdtp-xhs-card-content p {
 	font-weight: 400;
-	line-height: 1.75 !important;
+	margin-top: 0 !important;
+	margin-bottom: 0.5em !important;
+	line-height: 1.62 !important;
+}
+.mdtp-xhs-card-content h1 {
+	margin-top: 0 !important;
+	margin-bottom: 0.38em !important;
+}
+.mdtp-xhs-card-content h2 {
+	margin-top: 0.22em !important;
+	margin-bottom: 0.26em !important;
+}
+.mdtp-xhs-card-content h3 {
+	margin-top: 0.18em !important;
+	margin-bottom: 0.22em !important;
 }
 .mdtp-xhs-card-content li {
-	line-height: 1.68 !important;
-	margin-bottom: 0.32em !important;
+	line-height: 1.55 !important;
+	margin-bottom: 0.22em !important;
 }
 .mdtp-xhs-card-content ol,
 .mdtp-xhs-card-content ul {
-	margin-top: 0.28em !important;
-	margin-bottom: 0.5em !important;
+	margin-top: 0.24em !important;
+	margin-bottom: 0.34em !important;
+}
+.mdtp-xhs-card-content blockquote {
+	margin: 0.4em 0 !important;
+	padding: 0.5em 0.75em 0.5em 0.9em !important;
+}
+.mdtp-xhs-card-content blockquote p {
+	margin-bottom: 0.35em !important;
+}
+.mdtp-xhs-card-content blockquote p:last-child {
+	margin-bottom: 0 !important;
+}
+.mdtp-xhs-card-content hr {
+	margin: 0.4em 0 !important;
+}
+.mdtp-xhs-card-content pre {
+	margin: 0.4em 0 !important;
+}
+.mdtp-xhs-card-content img {
+	margin: 0.4em auto !important;
+}
+.mdtp-xhs-card-content .tags-container {
+	margin-top: 0.6em !important;
+	padding-top: 0.4em !important;
 }
 .mdtp-xhs-card-content li strong,
 .mdtp-xhs-card-content li b {
@@ -106,7 +137,7 @@ const XHS_MARKDOWN_TYPO_BOOST = `
 const XHS_CARDS_SIG = ".mdtp-xhs-cards.sig";
 
 /** 版式/CSS 升级时递增，避免误用旧缓存 PNG */
-const XHS_CARD_LAYOUT_VERSION = "auto-redbook-v8-short-card-vcenter";
+const XHS_CARD_LAYOUT_VERSION = "auto-redbook-v9-compact-vertical";
 
 function coverLayoutCss(w: number, cardHeight: number, outerBg: string): string {
 	const sx = w / 1080;
