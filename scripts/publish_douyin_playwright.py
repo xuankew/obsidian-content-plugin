@@ -196,7 +196,7 @@ def _douyin_attach_video_file(page: Any, vpath: str) -> bool:
                 continue
             t.first.click(timeout=4000)
             pwc.human_ms(800, 1600)
-            for fr in page.frames:
+            for fr in page.frames: 
                 if _try_set_input_files_on(fr, vpath):
                     return True
             if _try_set_input_files_on(page, vpath):
