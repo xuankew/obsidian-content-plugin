@@ -2,14 +2,18 @@ import type { TFile } from "obsidian";
 import { Notice } from "obsidian";
 import type { MdToPlatformPlugin } from "../pluginTypes";
 import { chatCompletion } from "../llm";
-import { loadRuleFiles, resolveRulesDir } from "../rulesLoader";
+import { loadGzhToVideoRule, loadRuleFiles, resolveRulesDir } from "../rulesLoader";
 import {
 	ARTIFACT_PUBLISH_GZH,
-	ARTIFACT_XHS_CONTENT,
 	ARTIFACT_PUBLISH_XHS,
+	ARTIFACT_VIDEO_CONFIG,
+	ARTIFACT_VIDEO_SCRIPT,
+	ARTIFACT_XHS_CONTENT,
 	writeExpandOutputs,
+	writeVideoExpandOutputs,
 } from "../noteArtifacts";
 import { splitPublishXhs } from "../splitPublishXhs";
+import { splitVideoScriptOutput } from "../splitVideoScript";
 import {
 	getEffectiveWorkflowPathParts,
 	getSessionKey,
@@ -70,8 +74,48 @@ ${body}`;
 		const rawB = (await chatCompletion(plugin.settings, messagesB)).trim();
 		const { publishXhs, xhsContent } = splitPublishXhs(rawB);
 
-		progress.setPhase("正在写入 Markdown 文件…", 0.9, false);
+		progress.setPhase("正在写入 Markdown 文件…", 0.82, false);
 		await writeExpandOutputs(plugin, file, publishGzh, publishXhs, xhsContent);
+
+		if (plugin.settings.videoScriptEnabled) {
+			progress.setPhase(
+				"第 3 步：正在生成短视频脚本与平台配置（video_script / video_config）…",
+				0.9,
+				true,
+			);
+			const gzhToVideo = loadGzhToVideoRule(plugin, plugin.settings);
+			const sec = plugin.settings.videoTargetSeconds;
+			const acc = plugin.settings.videoAccountInfo.trim() || "账号";
+			const messagesC = [
+				{ role: "system" as const, content: gzhToVideo },
+				{
+					role: "user" as const,
+					content: `下面是公众号成稿。请**严格**按 system 中「MDTP 机器可读输出」追加 <<<VIDEO_SCRIPT>>> 与 <<<VIDEO_CONFIG>>>；口播以约 **${sec} 秒** 为目标；若 JSON 中 accountInfo 留空，请填「${acc}」。
+
+【额外】JSON 的 voiceover 字段为**主口播稿**（用于 TTS），不要重复粘贴三处 opening/ending 全文。
+
+---文章开始---
+
+${publishGzh}
+
+---文章结束---`,
+				},
+			];
+			const rawC = (await chatCompletion(plugin.settings, messagesC)).trim();
+			const { videoScriptMd, videoConfigJson: rawJ } = splitVideoScriptOutput(rawC);
+			let videoConfigJson = rawJ;
+			try {
+				const o = JSON.parse(rawJ) as Record<string, unknown>;
+				if (!o.accountInfo || String(o.accountInfo).trim() === "") {
+					o.accountInfo = acc;
+				}
+				o._targetSeconds = sec;
+				videoConfigJson = JSON.stringify(o, null, 2);
+			} catch {
+				videoConfigJson = rawJ;
+			}
+			await writeVideoExpandOutputs(plugin, file, videoScriptMd, videoConfigJson);
+		}
 
 		progress.setPhase("扩写已完成", 1, false);
 		await new Promise((r) => setTimeout(r, 480));
@@ -82,13 +126,19 @@ ${body}`;
 	if (isWritingWorkflowLayout(plugin.settings)) {
 		const k = getSessionKey(file);
 		const w = getEffectiveWorkflowPathParts(plugin.settings);
+		const v = plugin.settings.videoScriptEnabled
+			? `；含 video_script / video_config（${w.workflowVaultRoot}/${w.folderPublished}/video/…）`
+			: "";
 		new Notice(
-			`扩写完成（会话 ${k}）。终稿：${w.workflowVaultRoot}/${w.folderPublished}/gzh|xhs/… ；Sandbox tmp：${w.workflowVaultRoot}/${w.folderSandbox}/…`,
+			`扩写完成（会话 ${k}）。终稿：${w.workflowVaultRoot}/${w.folderPublished}/gzh|xhs/… ；Sandbox tmp：${w.workflowVaultRoot}/${w.folderSandbox}/…${v}`,
 			12000,
 		);
 	} else {
+		const v = plugin.settings.videoScriptEnabled
+			? `；含 ${ARTIFACT_VIDEO_SCRIPT}、${ARTIFACT_VIDEO_CONFIG}`
+			: "";
 		new Notice(
-			`扩写完成。当前笔记未修改。已写入同目录：${ARTIFACT_PUBLISH_GZH}、${ARTIFACT_XHS_CONTENT}、${ARTIFACT_PUBLISH_XHS}`,
+			`扩写完成。当前笔记未修改。已写入同目录：${ARTIFACT_PUBLISH_GZH}、${ARTIFACT_XHS_CONTENT}、${ARTIFACT_PUBLISH_XHS}${v}`,
 			10000,
 		);
 	}

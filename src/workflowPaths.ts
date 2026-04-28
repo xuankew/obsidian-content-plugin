@@ -58,6 +58,8 @@ const WORKFLOW_ARTIFACT_BASENAMES = new Set([
 	"publish_gzh_with_images",
 	"publish_xhs",
 	"xhs_content",
+	"video_script",
+	"video_config",
 ]);
 
 /** 扩写/发布写入的会话目录：`标题片段-8位hash`，与 03-Published/gzh|xhs/<此名>/ 一致 */
@@ -109,6 +111,16 @@ export function vaultRelPublishedXhsSession(
 ): string {
 	return normalizePath(
 		`${workflowRoot(settings)}/${folderPublishedName(settings)}/xhs/${sessionKey}`,
+	);
+}
+
+/** 库内路径：`<工作流根>/<Published>/video/<session>/`（图文短视频产物） */
+export function vaultRelPublishedVideoSession(
+	settings: MdToPlatformSettings,
+	sessionKey: string,
+): string {
+	return normalizePath(
+		`${workflowRoot(settings)}/${folderPublishedName(settings)}/video/${sessionKey}`,
 	);
 }
 

@@ -21,6 +21,10 @@ import { normalizeXhsTheme } from "./xhsThemes";
 import { attachMdtpEditorTip } from "./ui/editorMdtpTip";
 import { openSeedanceTaskModal } from "./ui/seedanceTaskModal";
 import { openWechatChannelsVideoModal } from "./ui/wechatChannelsVideoModal";
+import {
+	parseVideoTtsUserConfigJson,
+	toVideoTtsConfigJsonString,
+} from "./videoTtsUserConfig";
 
 const LOG_PREFIX = "[md-to-platform]";
 
@@ -34,6 +38,8 @@ const ICON_GZH_TO_XHS = "layout-grid";
 const ICON_BAOYU = "sparkles";
 /** 微信视频号：库内 mp4 分片上传 */
 const ICON_CHANNELS_VIDEO = "video";
+/** 公众号/小红书资产 → 竖屏短视频（TTS+FFmpeg） */
+const ICON_MDTp_VIDEO = "clapperboard";
 
 type PipelineKind =
 	| "expand"
@@ -41,7 +47,8 @@ type PipelineKind =
 	| "xhs"
 	| "xhsRender"
 	| "gzhToXhsCards"
-	| "baoyuXhsImages";
+	| "baoyuXhsImages"
+	| "mdtpVideo";
 
 /** 悬停提示（中文）：说明各按钮用途 */
 const PIPELINE_HOVER_ZH: Record<PipelineKind, string> = {
@@ -57,6 +64,8 @@ const PIPELINE_HOVER_ZH: Record<PipelineKind, string> = {
 		"文→卡：从长文（或 publish_gzh）生成小红书两份 md，并导出 html 卡片图",
 	baoyuXhsImages:
 		"葆玉图：长文由 AI 拆成多段生图提示词，再用 CogView 逐张出信息流风格配图",
+	mdtpVideo:
+		"短视频：需 video_config.json + xhs 卡片；本机 Python 执行 TTS+FFmpeg 输出各平台 mp4 到 Published/video",
 };
 
 export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformPlugin {
@@ -73,8 +82,16 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 			// 底部状态栏文字链接：不依赖左侧功能区是否显示，桌面端始终可见
 			this.mountStatusBar();
 
-			// 扩写/公众号/小红书/文→卡/葆玉图 已在 Markdown 标题栏与右键菜单提供，不再占左侧功能区；仅「视频号」无标题栏入口，保留一条 ribbon
-			const chVideo = this.addRibbonIcon(ICON_CHANNELS_VIDEO, "视频号", () => {
+			// 扩写/公众号/小红书/文→卡/葆玉图/短视频 已在 Markdown 标题栏与右键菜单提供；无标题栏入口的保留 ribbon
+			const mdtpVid = this.addRibbonIcon(ICON_MDTp_VIDEO, "短视频", () => {
+				void this.dispatchPipeline("mdtpVideo", this.app.workspace.getActiveFile());
+			});
+			setTooltip(
+				mdtpVid,
+				PIPELINE_HOVER_ZH.mdtpVideo,
+				{ placement: "right" },
+			);
+			const chVideo = this.addRibbonIcon(ICON_CHANNELS_VIDEO, "视频号上传", () => {
 				openWechatChannelsVideoModal(this.app, this);
 			});
 			setTooltip(
@@ -159,6 +176,12 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 				name: "MDTP：公众号文→小红书图文（生成 md + 导出卡片图）",
 				editorCallback: (_e, ctx) =>
 					void this.dispatchPipeline("gzhToXhsCards", ctx.file),
+			});
+			this.addCommand({
+				id: "mdtp-mdtp-video",
+				name: "MDTP：生成短视频（卡片+TTS+FFmpeg）",
+				editorCallback: (_e, ctx) =>
+					void this.dispatchPipeline("mdtpVideo", ctx.file),
 			});
 			this.addCommand({
 				id: "mdtp-baoyu-xhs-images",
@@ -246,6 +269,13 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 					await runBaoyuXhsImagesPipeline(this, file);
 					break;
 				}
+				case "mdtpVideo": {
+					const { runMdtpVideoPipeline } = await import(
+						"./pipelines/mdtpVideo",
+					);
+					await runMdtpVideoPipeline(this, file);
+					break;
+				}
 			}
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -280,6 +310,12 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 				.setTitle("MDTP：公众号→小红书图文")
 				.setIcon(ICON_GZH_TO_XHS)
 				.onClick(() => void this.dispatchPipeline("gzhToXhsCards", file)),
+		);
+		menu.addItem((item) =>
+			item
+				.setTitle("MDTP：生成短视频")
+				.setIcon(ICON_MDTp_VIDEO)
+				.onClick(() => void this.dispatchPipeline("mdtpVideo", file)),
 		);
 		menu.addItem((item) =>
 			item
@@ -318,6 +354,7 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 			add("公众号", "wechat");
 			add("小红书", "xhs");
 			add("文→卡", "gzhToXhsCards");
+			add("短视频", "mdtpVideo");
 			add("葆玉图", "baoyuXhsImages");
 			menu.showAtMouseEvent(ev);
 		});
@@ -398,6 +435,12 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 				}),
 				"baoyuXhsImages",
 			);
+			tip(
+				view.addAction(ICON_MDTp_VIDEO, "短视频", () => {
+					void this.dispatchPipeline("mdtpVideo", view.file);
+				}),
+				"mdtpVideo",
+			);
 			attachMdtpEditorTip(this, view);
 			this.decoratedViews.add(view);
 			this.logDbg("工具栏按钮已挂接", pathLabel);
@@ -453,6 +496,28 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 			this.settings.xhsUseBundledRedbookPublish =
 				DEFAULT_SETTINGS.xhsUseBundledRedbookPublish;
 		}
+		const xhsMode = this.settings.xhsPublishMode;
+		this.settings.xhsPublishMode =
+			xhsMode === "playwright" ? "playwright" : "api";
+		if (typeof this.settings.xhsPlaywrightHeaded !== "boolean") {
+			this.settings.xhsPlaywrightHeaded = DEFAULT_SETTINGS.xhsPlaywrightHeaded;
+		}
+		if (typeof this.settings.xhsPlaywrightKeepOpenOnError !== "boolean") {
+			this.settings.xhsPlaywrightKeepOpenOnError =
+				DEFAULT_SETTINGS.xhsPlaywrightKeepOpenOnError;
+		}
+		if (typeof this.settings.xhsPlaywrightManualFinalClick !== "boolean") {
+			this.settings.xhsPlaywrightManualFinalClick =
+				DEFAULT_SETTINGS.xhsPlaywrightManualFinalClick;
+		}
+		if (typeof this.settings.xhsPlaywrightProfileName !== "string") {
+			this.settings.xhsPlaywrightProfileName =
+				DEFAULT_SETTINGS.xhsPlaywrightProfileName;
+		} else {
+			this.settings.xhsPlaywrightProfileName = this.settings.xhsPlaywrightProfileName
+				.replace(/[/\\]/g, "")
+				.trim() || "default";
+		}
 		if (typeof this.settings.xhsPythonPath !== "string") {
 			this.settings.xhsPythonPath = DEFAULT_SETTINGS.xhsPythonPath;
 		}
@@ -463,6 +528,57 @@ export default class MdToPlatformPlugin extends Plugin implements IMdToPlatformP
 		this.settings.expandGzhTargetChars = Number.isFinite(egc)
 			? Math.min(20000, Math.max(400, Math.round(egc)))
 			: DEFAULT_SETTINGS.expandGzhTargetChars;
+		if (typeof this.settings.videoScriptEnabled !== "boolean") {
+			this.settings.videoScriptEnabled = DEFAULT_SETTINGS.videoScriptEnabled;
+		}
+		const vts = Number(this.settings.videoTargetSeconds);
+		this.settings.videoTargetSeconds = Number.isFinite(vts)
+			? Math.min(120, Math.max(10, Math.round(vts)))
+			: DEFAULT_SETTINGS.videoTargetSeconds;
+		if (typeof this.settings.videoAccountInfo !== "string") {
+			this.settings.videoAccountInfo = DEFAULT_SETTINGS.videoAccountInfo;
+		}
+		const veng = this.settings.videoTtsEngine;
+		this.settings.videoTtsEngine = veng === "listenhub" ? "listenhub" : "edge";
+		if (typeof this.settings.videoTtsConfigJson !== "string") {
+			this.settings.videoTtsConfigJson = DEFAULT_SETTINGS.videoTtsConfigJson;
+		} else {
+			const tts = parseVideoTtsUserConfigJson(this.settings.videoTtsConfigJson);
+			this.settings.videoTtsEngine = tts.engine;
+			this.settings.videoTtsConfigJson = toVideoTtsConfigJsonString(tts, true);
+		}
+		if (typeof this.settings.videoFfmpegPath !== "string") {
+			this.settings.videoFfmpegPath = DEFAULT_SETTINGS.videoFfmpegPath;
+		}
+		if (typeof this.settings.videoPythonPath !== "string") {
+			this.settings.videoPythonPath = DEFAULT_SETTINGS.videoPythonPath;
+		}
+		if (typeof this.settings.videoUploadDouyin !== "boolean") {
+			this.settings.videoUploadDouyin = DEFAULT_SETTINGS.videoUploadDouyin;
+		}
+		if (typeof this.settings.videoPlaywrightProfileName !== "string") {
+			this.settings.videoPlaywrightProfileName =
+				DEFAULT_SETTINGS.videoPlaywrightProfileName;
+		}
+		if (typeof this.settings.videoUploadXiaohongshu !== "boolean") {
+			this.settings.videoUploadXiaohongshu = DEFAULT_SETTINGS.videoUploadXiaohongshu;
+		}
+		if (typeof this.settings.videoUploadGongzhonghao !== "boolean") {
+			this.settings.videoUploadGongzhonghao = DEFAULT_SETTINGS.videoUploadGongzhonghao;
+		}
+		if (typeof this.settings.videoUploadShipinhao !== "boolean") {
+			this.settings.videoUploadShipinhao = DEFAULT_SETTINGS.videoUploadShipinhao;
+		}
+		if (typeof this.settings.videoBgmEnabled !== "boolean") {
+			this.settings.videoBgmEnabled = DEFAULT_SETTINGS.videoBgmEnabled;
+		}
+		if (typeof this.settings.videoBgmPath !== "string") {
+			this.settings.videoBgmPath = DEFAULT_SETTINGS.videoBgmPath;
+		}
+		const vbgm = Number(this.settings.videoBgmVolume);
+		this.settings.videoBgmVolume = Number.isFinite(vbgm)
+			? Math.min(0.45, Math.max(0.04, vbgm))
+			: DEFAULT_SETTINGS.videoBgmVolume;
 	}
 
 	async saveSettings(): Promise<void> {

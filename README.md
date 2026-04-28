@@ -1,6 +1,6 @@
 # MD to Platform（Obsidian 插件）
 
-在 Obsidian **桌面端**里，用当前笔记完成：**扩写**、**公众号草稿**（智谱生图插图 + 花生风格 HTML 正文）、**小红书卡片图**（可选本机发布脚本）、**公众号长文→小红书图文**、**Baoyu 风多图配图**、**火山方舟 Seedance 视频任务**，以及 **微信视频号库内视频分片上传**（init + chunk，与公众号共用凭证）。
+在 Obsidian **桌面端**里，用当前笔记完成：**扩写**、**公众号草稿**（智谱生图插图 + 花生风格 HTML 正文）、**小红书卡片图**（可选本机发布脚本）、**公众号长文→小红书图文**、**竖屏短视频**（扩写生成 `video_config.json` + 本机 Python TTS+FFmpeg 出三平台 mp4）、**Baoyu 风多图配图**、**火山方舟 Seedance 视频任务**，以及 **微信视频号库内视频分片上传**（init + chunk，与公众号共用凭证）。
 
 **English:** [README_EN.md](./README_EN.md)
 
@@ -47,6 +47,7 @@
 |------|------|
 | `公众号扩写规则.md` | 扩写公众号正文时的 system 规则（**必填**） |
 | `gzh_to_xhs.md` | 公众号稿转小红书卡片时的 system 规则（**必填**） |
+| `gzh_to_vedio.md` | 扩写第 3 步：长文 → 短视频脚本 + `video_config.json`（**可选**；关闭「扩写时同步视频脚本」则跳过） |
 | `baoyu_xhs_images.md` | 「Baoyu 风配图」：长文拆页 + 生图提示词风格（**可选**；缺失时用插件内置默认） |
 
 前两者若缺失，扩写/文→卡 会报错。你可按需编辑；「Baoyu 风」思路可参考社区 [baoyu-xhs-images](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-xhs-images) 类工作流。插图由设置中的 **插图渠道** 决定（智谱 `glm-image` 或火山方舟 Seedream 等），不再写死单一模型名。
@@ -187,12 +188,16 @@
   - 若你自建了别的 venv，用该 venv 里的 `bin/python3` 或 `bin/python` 做「Python 解释器」即可。非 Homebrew 环境可尝试 `python3 -m pip install xhs` 装到**当前**解释器，须与设置里为同一路径。  
   - Cookie 由插件经环境变量传入，**不必**再装 `python-dotenv`；`requests` 仅在你用命令行 `--api-mode` 时需要。见 `scripts/requirements-xhs-publish.txt`。  
   - 内置脚本为仓库内 **`scripts/publish_xhs_redbook.py`**（MDT 环境变量模式由插件启动）。从图形界面启动的 Obsidian 的 `PATH` 可能与终端不同，**「Python 解释器」** 建议始终填**绝对路径**。留空时 macOS 会尝试 `/opt/homebrew/bin/python3` 等。  
+  - **可选：Playwright 浏览器模式**（设置「内置发布方式」）：使用 **`scripts/publish_xhs_playwright.py`**，不依赖 `MDT_XHS_COOKIE`，依赖本机/持久化用户目录下已登录的小红书创作台；`pip install` 后插件会尝试 `python -m playwright install chromium`（体积较大，也可安装 Google Chrome 走 CDP 优先通道）。半自动/失败保活/截图等见设置项；验证场景见 [docs/xhs-playwright-verify.md](./docs/xhs-playwright-verify.md)。  
   - **不能把一份 Python 包目录覆盖所有平台**：`xhs` 依赖的 **lxml 等为原生扩展**（.so / .pyd），与系统 + CPU 绑定；Obsidian 又是「一份插件 zip 通吃 Win/macOS」。  
   - **可选：在本机把依赖打进 `scripts/xhs_bundles/<平台名>/`（用 PYTHONPATH 加载）**  
     在插件根执行 `npm run bundle:xhs-embed`（或 `node scripts/bundle_xhs_pip_target.mjs`；若遇 PEP 668，先建 venv 再设 `MDT_BUNDLE_PYTHON=…/xhs_venv/bin/python3` 执行）。成功后会生成本机目录，插件在发布时会**自动**设置 `PYTHONPATH`；**换电脑/换系统需重跑**；**仓库一般不提交**该目录。详见 `scripts/xhs_bundles/README.md`。  
   - 若你希望完全自定义流程，在 **发布命令** 中填写自己的可执行行，**优先于**内置脚本。  
   - 开启 **「启用外部发布脚本」** 后才会真正执行（dry-run 时脚本仍跑但会收到 `MDT_DRY_RUN=1`；内置 Python 在 dry-run 下只做校验不发布）。
 - **仅渲染、不同步到小红书 app**：可关闭 **启用外部发布脚本**，只生成 `card_*.png`；若同时开了 **同步公众号图片草稿** 等，仍会走对应步骤。
+- **短视频（图文卡片 + 配音 + FFmpeg）**  
+  - 在设置「短视频」中开启**扩写时同步视频脚本**后，扩写第 3 次 AI 会按 `gzh_to_vedio.md` 写 `video_script.md` 与 `video_config.json`（工作流下在 `…/Published/video/<会话>/`）。  
+  - 点编辑栏 **短视频** 或运行命令 `MDTP：生成短视频`：会复用/渲染 `xhs` 卡片 PNG，调用本机 **`scripts/render_video.py`**（需 `pip install -r scripts/requirements-video.txt`、本机 `ffmpeg`/`ffprobe`），生成 `douyin.mp4` / `xiaohongshu.mp4` / `shipinhao.mp4` 及 `voice_mixed.m4a` 等。TTS 默认 `edge-tts`；ListenHub 需在脚本内对接或改用 edge。  
 
 子进程会收到与 `scripts/publish_xhs_stub.js` / 内置 Python 一致的环境变量，例如：
 
@@ -204,6 +209,7 @@
 | `MDT_DRY_RUN` | `1` 表示 dry-run |
 | `MDT_XHS_COOKIE` | 设置中填写 Cookie 时由插件注入（内置脚本亦识别 `XHS_COOKIE` 与项目 `.env`） |
 | `MDT_XHS_AS_PRIVATE` | `1` 为仅自己可见；`0` 为公开（以脚本/库实际支持为准） |
+| `MDT_XHS_PLAYWRIGHT_PROFILE` 等 | Playwright 模式：子目录名、有头/无头、半自动、失败保活等（与设置一致，自定义命令亦可读取） |
 
 ### 其它
 
@@ -215,7 +221,8 @@
 ## 使用流程（建议顺序）
 
 1. **写文章或提纲**（当前 Markdown 笔记）。
-2. 点击 **扩写**（或命令 `MDTP：扩写`）。  
+2. 点击 **扩写**（或命令 `MDTP：扩写`）；若开启视频脚本，会多一步生成 `video_config.json`。  
+2b. 可选：点 **短视频** 生成本地三平台 MP4。    
    - 两次 LLM 调用，生成/更新 `publish_gzh.md`、`xhs_content.md`、`publish_xhs.md`；**不修改**当前笔记正文。  
    - 工作流开启时终稿在 `Published/gzh`、`Published/xhs`；关闭时在笔记同目录。
 3. **发布公众号**：**公众号** 按钮或 `MDTP：发布公众号草稿`。  
@@ -237,9 +244,9 @@
 ## 界面入口（任选其一）
 
 1. **窗口最底部状态栏左侧**：**「MDTP ▾」**（点击展开与左侧功能区相同的管线菜单；仅占少量宽度，避免挤没右侧字数）。  
-2. **左侧 Ribbon**：**扩写、公众号、小红书、文→卡、葆玉图、视频号**（视频号打开上传对话框）。若关闭功能区，可在 **设置 → 外观** 中开启。  
+2. **左侧 Ribbon**：**扩写、公众号、小红书、文→卡、葆玉图、短视频、视频号**（视频号打开上传 .mp4 分片上传对话框）。若关闭功能区，可在 **设置 → 外观** 中开启。  
 3. **编辑器右键** / **文件列表中对 .md 右键**：上述流程（右键菜单不含视频号，请用命令或 Ribbon）。  
-4. **命令面板**（`Cmd/Ctrl + P`）：搜索 **`MDTP：`**，包含扩写、公众号、小红书、文→卡、葆玉图、**Seedance 视频任务**、**视频号分片上传**。
+4. **命令面板**（`Cmd/Ctrl + P`）：搜索 **`MDTP：`**，包含扩写、公众号、小红书、文→卡、葆玉图、**生成短视频**、**Seedance 视频任务**、**视频号分片上传**。
 
 ---
 

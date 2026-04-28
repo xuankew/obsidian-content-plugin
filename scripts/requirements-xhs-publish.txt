@@ -1,10 +1,13 @@
-# 与 Obsidian 插件 + publish_xhs_redbook.py 配合
+# 与 Obsidian 插件 + publish_xhs_redbook.py / publish_xhs_playwright.py 配合
 #
 # 仅在本机用「发布小红书」+ 设置里已填 Cookie 时，最低需要：
 #   xhs
 #
 # 其余为可选：python-dotenv 仅在你用 .env 且想自动解析时；requests 仅 --api-mode
+# Playwright 模式需 playwright。安装后需执行: python -m playwright install chromium（插件「一键安装」会尝试）
+# playwright-stealth 为可选，可手动 pip 安装，失败不阻塞
 
 xhs
 python-dotenv
 requests
+playwright>=1.40.0

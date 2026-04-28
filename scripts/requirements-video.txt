@@ -1,0 +1,6 @@
+# MDTP 短视频：scripts/render_video.py
+# 安装：在 xhs_venv 或本机 venv 中 pip install -r requirements-video.txt
+# 另需本机可执行 ffmpeg、ffprobe（PATH 或 MDT_VIDEO_FFMPEG_PATH 指定目录）
+
+edge-tts>=6.1.0
+Pillow>=10.0.0

@@ -135,6 +135,8 @@ const XHS_MARKDOWN_TYPO_BOOST = `
 
 /** 与 xhs_content、分隔符、主题与尺寸绑定；一致且 PNG 齐全时可跳过 html-to-image */
 const XHS_CARDS_SIG = ".mdtp-xhs-cards.sig";
+/** 短视频 9:16（1080×1920）专用于 video 目录，与 Published/xhs 的缓存分离 */
+const XHS_CARDS_SIG_9X16 = ".mdtp-xhs-cards-9x16.sig";
 
 /** 版式/CSS 升级时递增，避免误用旧缓存 PNG */
 const XHS_CARD_LAYOUT_VERSION = "auto-redbook-v9-compact-vertical";
@@ -202,8 +204,30 @@ function makeXhsCardsRenderSig(
 	partCount: number,
 	publishXhsSnippet: string,
 	fontSigPart: string,
+	/** 短视频 9:16：参与 hash 的尺寸与 default 不同，不破坏 Published 下既有 .sig 复用 */
+	video9x16?: { w: number; h: number; dpr: number; maxH: number; cover: boolean } | null,
 ): string {
 	const s = plugin.settings;
+	if (video9x16) {
+		return hashString(
+			[
+				XHS_CARD_LAYOUT_VERSION,
+				"short-video-9x16-1080x1920-v1",
+				raw,
+				s.xhsDelimiter,
+				normalizeXhsTheme(s.xhsTheme),
+				String(video9x16.w),
+				String(video9x16.h),
+				String(video9x16.dpr),
+				String(video9x16.maxH),
+				String(s.xhsDynamicHeight),
+				String(partCount),
+				String(video9x16.cover),
+				fontSigPart,
+				publishXhsSnippet.slice(0, 6000),
+			].join("\0"),
+		);
+	}
 	return hashString(
 		[
 			XHS_CARD_LAYOUT_VERSION,
@@ -230,6 +254,16 @@ export async function runRenderXhsPipeline(
 		suppressNotice?: boolean;
 		/** 由外层传入则不在此关闭；未传则本函数自建并收尾 */
 		progress?: PipelineProgressHandle;
+		/**
+		 * 短视频专用：在 **video 会话目录** 写出 9:16（1080×1920）`card_*.png`（与
+		 * `03-Published/xhs/…` 的 3:4 出图独立）；默认不导 cover 以省时间。
+		 */
+		forShortVideo9x16?: {
+			/** 通常为 `…/03-Published/video/<会话>/` 的绝对路径 */
+			outDirAbs: string;
+			/** 默认 false */
+			includeCover?: boolean;
+		};
 	},
 ): Promise<string> {
 	let ownProgress: PipelineProgressHandle | undefined;
@@ -257,9 +291,23 @@ export async function runRenderXhsPipeline(
 		const publishMd = await tryReadPublishXhsWithFallback(plugin, file);
 		const publishSig = publishMd ?? "";
 
-		progress.setPhase(`准备渲染 ${parts.length} 张卡片为 PNG…`, 0.15, true);
+		const v9 = opts?.forShortVideo9x16;
+		const isVideo9x16 = Boolean(v9);
+		const outDir = isVideo9x16
+			? path.normalize(v9!.outDirAbs)
+			: resolveXhsCardImagesFsDir(plugin, file, plugin.settings);
+		if (isVideo9x16) {
+			fs.mkdirSync(outDir, { recursive: true });
+		}
 
-		const outDir = resolveXhsCardImagesFsDir(plugin, file, plugin.settings);
+		progress.setPhase(
+			isVideo9x16
+				? `准备渲染 ${parts.length} 张 9:16（1080×1920）卡片到 video 目录…`
+				: `准备渲染 ${parts.length} 张卡片为 PNG…`,
+			0.15,
+			true,
+		);
+
 		const { fontFaceCss, sigPart: fontSigPart } = buildLXGWWenKaiFontFaceCss(
 			plugin,
 			{
@@ -277,14 +325,31 @@ export async function runRenderXhsPipeline(
 		}
 		const wenKaiActive = Boolean(fontFaceCss);
 		const fontStack = getXhsCardFontStack(wenKaiActive);
+
+		const w = isVideo9x16 ? 1080 : plugin.settings.xhsWidth;
+		const baseH = isVideo9x16 ? 1920 : plugin.settings.xhsHeight;
+		const dpr = plugin.settings.xhsDpr;
+		const maxH = isVideo9x16 ? 1920 : plugin.settings.xhsMaxHeight;
+		const useDynamicH = isVideo9x16 ? false : plugin.settings.xhsDynamicHeight;
+		const doCover = isVideo9x16
+			? v9!.includeCover === true
+			: plugin.settings.xhsCoverEnabled;
+
+		const video9x16Hash = isVideo9x16
+			? { w, h: baseH, dpr, maxH, cover: doCover }
+			: null;
 		const renderSig = makeXhsCardsRenderSig(
 			plugin,
 			raw,
 			parts.length,
 			publishSig,
 			fontSigPart,
+			video9x16Hash,
 		);
-		const sigPath = path.join(outDir, XHS_CARDS_SIG);
+		const sigPath = path.join(
+			outDir,
+			isVideo9x16 ? XHS_CARDS_SIG_9X16 : XHS_CARDS_SIG,
+		);
 		let reusePng = false;
 		if (fs.existsSync(sigPath)) {
 			try {
@@ -298,7 +363,7 @@ export async function runRenderXhsPipeline(
 							break;
 						}
 					}
-					if (allOk && plugin.settings.xhsCoverEnabled) {
+					if (allOk && doCover) {
 						const cov = path.join(outDir, "cover.png");
 						if (!fs.existsSync(cov) || fs.statSync(cov).size === 0) {
 							allOk = false;
@@ -313,12 +378,18 @@ export async function runRenderXhsPipeline(
 
 		if (reusePng) {
 			progress.setPhase(
-				`内容与版式未变且已有 ${parts.length} 张 PNG，跳过卡片渲染…`,
+				isVideo9x16
+					? `video 目录下已有 ${parts.length} 张 9:16 卡片且未变更，跳过重渲…`
+					: `内容与版式未变且已有 ${parts.length} 张 PNG，跳过卡片渲染…`,
 				0.45,
 				false,
 			);
 			if (!opts?.suppressNotice) {
-				new Notice(`已复用 ${parts.length} 张卡片：${outDir}`);
+				new Notice(
+					isVideo9x16
+						? `已复用 ${parts.length} 张 9:16 卡片：${outDir}`
+						: `已复用 ${parts.length} 张卡片：${outDir}`,
+				);
 			}
 			if (opts?.progress) {
 				progress.setPhase(`已复用 ${parts.length} 张卡片 PNG`, 0.85, false);
@@ -335,10 +406,6 @@ export async function runRenderXhsPipeline(
 			XHS_AUTO_REDBOOK_OUTER_GRADIENT.default;
 		const captureBg =
 			XHS_CARD_CAPTURE_BG[tid] ?? XHS_CARD_CAPTURE_BG.default;
-		const w = plugin.settings.xhsWidth;
-		const baseH = plugin.settings.xhsHeight;
-		const dpr = plugin.settings.xhsDpr;
-		const maxH = plugin.settings.xhsMaxHeight;
 
 		/* Shadow root：隔离 Obsidian 全局样式（含对 p/blockquote 的 !important），否则主题排版几乎不生效，只剩内联的外层渐变 */
 		const host = document.body.appendChild(document.createElement("div"));
@@ -368,7 +435,7 @@ export async function runRenderXhsPipeline(
 		try {
 			g.fetch = fetchViaRequestUrl as typeof fetch;
 
-			if (plugin.settings.xhsCoverEnabled) {
+			if (doCover) {
 				progress.setPhase("正在导出封面 cover.png…", 0.16, false);
 				const coverFields = extractXhsCoverFields(publishMd, parts[0] ?? "");
 				const coverRoot = document.createElement("div");
@@ -465,7 +532,7 @@ export async function runRenderXhsPipeline(
 				await new Promise<void>((r) => setTimeout(r, 50));
 
 				/* 固定高度时：正文块明显矮于内层白卡，则垂直居中，减轻「上半截一坨、下半截全空」 */
-				if (!plugin.settings.xhsDynamicHeight) {
+				if (!useDynamicH) {
 					void inner.offsetHeight;
 					const innerH = inner.clientHeight;
 					const contentH = content.scrollHeight;
@@ -474,7 +541,7 @@ export async function runRenderXhsPipeline(
 					}
 				}
 
-				if (plugin.settings.xhsDynamicHeight) {
+				if (useDynamicH) {
 					const rawH = outer.scrollHeight;
 					const h = Math.min(Math.max(rawH, baseH), maxH);
 					outer.style.height = `${h}px`;
@@ -517,8 +584,9 @@ export async function runRenderXhsPipeline(
 		}
 
 		if (!opts?.suppressNotice) {
-			const cov = plugin.settings.xhsCoverEnabled ? "、cover.png" : "";
-			new Notice(`已生成 ${parts.length} 张卡片${cov}：${outDir}`);
+			const cov = doCover ? "、cover.png" : "";
+			const label = isVideo9x16 ? `9:16 卡片${cov}` : `卡片${cov}`;
+			new Notice(`已生成 ${parts.length} 张${label}：${outDir}`);
 		}
 		return outDir;
 	} finally {

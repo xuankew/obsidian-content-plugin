@@ -8,6 +8,8 @@ const GZH_RULE = "公众号扩写规则.md";
 /** 列表缩进、紧凑列表、标题与图片等，保证公众号草稿箱排版；与 `公众号扩写规则.md` 合并进扩写 system */
 const WECHAT_MD_RULE = "wechat-markdown-rules.zh.md";
 const XHS_RULE = "gzh_to_xhs.md";
+/** 公众号文章 → 短视频脚本（与扩写第 3 步绑定；文件名历史拼写 vedio 保持不变） */
+const GZH_TO_VIDEO_RULE = "gzh_to_vedio.md";
 
 /**
  * 解析插件根目录。部分环境下 manifest.dir 为空，需用「库路径/.obsidian/plugins/<id>」回退。
@@ -38,6 +40,13 @@ export function getPluginFolderPath(plugin: Plugin): string {
 
 /** 与 main.js 同级的内置小红书发布脚本（基于 Auto-Redbook-Skills `publish_xhs.py` 适配 MDT 环境变量） */
 export const BUNDLED_SCRIPT_PUBLISH_XHS_REDBOOK = "scripts/publish_xhs_redbook.py" as const;
+/** 可选：本机可见浏览器 + Playwright 发图文，与 redbook 共用 MDT_ 环境变量 */
+export const BUNDLED_SCRIPT_PUBLISH_XHS_PLAYWRIGHT = "scripts/publish_xhs_playwright.py" as const;
+/** 本机 Playwright 发布抖音/视频号成品 MP4，见 scripts/publish_*_playwright.py */
+export const BUNDLED_SCRIPT_PUBLISH_DOUYIN_PLAYWRIGHT = "scripts/publish_douyin_playwright.py" as const;
+export const BUNDLED_SCRIPT_PUBLISH_WECHAT_CHANNELS_PLAYWRIGHT =
+	"scripts/publish_wechat_channels_playwright.py" as const;
+export const BUNDLED_SCRIPT_RENDER_VIDEO = "scripts/render_video.py" as const;
 
 /**
  * 返回内置 `scripts/publish_xhs_redbook.py` 的绝对路径；若插件目录无法解析或文件不存在则 `null`。
@@ -50,6 +59,71 @@ export function getBundledPublishXhsRedbookPyPath(plugin: Plugin): string | null
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * 返回内置 `scripts/publish_xhs_playwright.py` 的绝对路径；若文件不存在则 `null`。
+ */
+export function getBundledPublishXhsPlaywrightPyPath(plugin: Plugin): string | null {
+	try {
+		const root = getPluginFolderPath(plugin);
+		const p = path.join(root, BUNDLED_SCRIPT_PUBLISH_XHS_PLAYWRIGHT);
+		return fs.existsSync(p) ? p : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 图文短视频合成脚本（TTS + FFmpeg + Pillow 可选）
+ */
+export function getBundledRenderVideoPyPath(plugin: Plugin): string | null {
+	try {
+		const root = getPluginFolderPath(plugin);
+		const p = path.join(root, BUNDLED_SCRIPT_RENDER_VIDEO);
+		return fs.existsSync(p) ? p : null;
+	} catch {
+		return null;
+	}
+}
+
+export function getBundledPublishDouyinPlaywrightPyPath(plugin: Plugin): string | null {
+	try {
+		const root = getPluginFolderPath(plugin);
+		const p = path.join(root, BUNDLED_SCRIPT_PUBLISH_DOUYIN_PLAYWRIGHT);
+		return fs.existsSync(p) ? p : null;
+	} catch {
+		return null;
+	}
+}
+
+export function getBundledPublishWeChatChannelsPlaywrightPyPath(
+	plugin: Plugin,
+): string | null {
+	try {
+		const root = getPluginFolderPath(plugin);
+		const p = path.join(root, BUNDLED_SCRIPT_PUBLISH_WECHAT_CHANNELS_PLAYWRIGHT);
+		return fs.existsSync(p) ? p : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 读取 `gzh_to_vedio.md`；不存在则抛错（仅在开启「扩写时同步视频脚本」时使用）。
+ */
+export function loadGzhToVideoRule(
+	plugin: Plugin,
+	settings: MdToPlatformSettings,
+): string {
+	const dir = resolveRulesDir(plugin, settings);
+	const p = path.join(dir, GZH_TO_VIDEO_RULE);
+	if (!fs.existsSync(p)) {
+		throw new Error(
+			`找不到规则：${p}\n请在 rules 目录放置 ${GZH_TO_VIDEO_RULE}，或在设置中调整「规则目录覆盖」。`,
+		);
+	}
+	return fs.readFileSync(p, "utf8");
 }
 
 /** 如 `darwin-arm64`，与 `process` 一致，用于 `scripts/xhs_bundles/<id>/` */

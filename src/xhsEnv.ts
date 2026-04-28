@@ -20,6 +20,10 @@ export type XhsEnvStatus = {
 	venvPython: string;
 	hasVenv: boolean;
 	canImportXhs: boolean;
+	/** 已 `pip install playwright` 且可 import；用于内置 Playwright 发布脚本 */
+	canImportPlaywright: boolean;
+	/** `edge-tts`、`Pillow` 等，用于 `scripts/render_video.py`；FFmpeg 需单独在 PATH/设置中配置 */
+	canImportVideoDeps: boolean;
 };
 
 function spawnCollect(
@@ -65,6 +69,13 @@ export function resolveVenvPythonExecutable(venvDir: string): string {
 	const p3 = path.join(venvDir, "bin", "python3");
 	if (fs.existsSync(p3)) return p3;
 	return path.join(venvDir, "bin", "python");
+}
+
+/** 若库内/插件下 xhs_venv 已存在且带解释器，返回其路径，否则 `null`（供短视频等优先使用） */
+export function tryGetXhsVenvPythonPath(plugin: Plugin): string | null {
+	const dir = resolveXhsVenvDir(plugin);
+	const py = resolveVenvPythonExecutable(dir);
+	return fs.existsSync(py) ? py : null;
 }
 
 function candidatesFromSettings(pythonPathOverride: string): ExecSpec[] {
@@ -163,6 +174,66 @@ export async function canImportXhs(pythonExe: string, env?: NodeJS.ProcessEnv): 
 	}
 }
 
+export async function canImportPlaywright(
+	pythonExe: string,
+	env?: NodeJS.ProcessEnv,
+): Promise<boolean> {
+	try {
+		const { code } = await spawnCollect(
+			pythonExe,
+			["-c", "import playwright; print(1)"],
+			{ env },
+		);
+		return code === 0;
+	} catch {
+		return false;
+	}
+}
+
+export async function canImportVideoDeps(
+	pythonExe: string,
+	env?: NodeJS.ProcessEnv,
+): Promise<boolean> {
+	try {
+		const { code } = await spawnCollect(
+			pythonExe,
+			["-c", "import edge_tts; from PIL import Image; print(1)"],
+			{ env },
+		);
+		return code === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 下载 Playwright 管理的 Chromium（较大，首次可能数分钟）。失败时仅打日志，不抛错（仍可用本机 Chrome + CDP）。
+ */
+export async function tryInstallPlaywrightChromium(
+	venvPy: string,
+	opts?: { onLog?: (s: string) => void; env?: NodeJS.ProcessEnv },
+): Promise<boolean> {
+	const onLog = opts?.onLog ?? (() => {});
+	const env: NodeJS.ProcessEnv = { ...process.env, ...opts?.env };
+	if (!(await canImportPlaywright(venvPy, env))) {
+		onLog("跳过 Chromium 安装：当前解释器无法 import playwright。\n");
+		return false;
+	}
+	onLog("正在执行 python -m playwright install chromium（首次或更新时较慢、需联网）…\n");
+	const { code, out } = await spawnCollect(venvPy, ["-m", "playwright", "install", "chromium"], {
+		env,
+	});
+	onLog(out);
+	if (code !== 0) {
+		onLog(
+			"⚠️ Playwright Chromium 安装未成功。若本机已装 Google Chrome，发布脚本会优先用 Chrome；否则请重试或检查网络/磁盘。\n",
+		);
+		return false;
+	}
+	onLog("Playwright Chromium 已就绪。\n");
+	return true;
+}
+
 export async function ensureXhsVenvInstalled(
 	plugin: Plugin,
 	pythonPathOverride: string,
@@ -182,6 +253,8 @@ export async function ensureXhsVenvInstalled(
 			venvPython: venvPy,
 			hasVenv: fs.existsSync(venvDir),
 			canImportXhs: false,
+			canImportPlaywright: false,
+			canImportVideoDeps: false,
 		};
 	}
 
@@ -222,13 +295,43 @@ export async function ensureXhsVenvInstalled(
 		if (code !== 0) throw new Error(out || "pip 安装 xhs 失败");
 	}
 
-	const ok = await canImportXhs(venvPy, env);
+	const videoReq = path.join(
+		getPluginFolderPath(plugin),
+		"scripts",
+		"requirements-video.txt",
+	);
+	if (fs.existsSync(videoReq)) {
+		onLog(`安装短视频依赖: ${videoReq}\n`);
+		const { code: vCode, out: vOut } = await spawnCollect(
+			venvPy,
+			["-m", "pip", "install", "-r", videoReq],
+			{ env },
+		);
+		onLog(vOut);
+		if (vCode !== 0) {
+			onLog(
+				"⚠️ 短视频依赖（edge-tts、Pillow 等）安装未成功，可在本库 venv 中手动执行：\n" +
+					`  "${venvPy}" -m pip install -r ${videoReq}\n` +
+					"（小红书发布依赖若已成功，仍可使用；FFmpeg 需本机安装并在 PATH 或设置中指定。）\n",
+			);
+		}
+	} else {
+		onLog("未找到 scripts/requirements-video.txt，跳过短视频 pip 依赖。\n");
+	}
+
+	const okXhs = await canImportXhs(venvPy, env);
+	const okPw = await canImportPlaywright(venvPy, env);
+	if (okPw) {
+		await tryInstallPlaywrightChromium(venvPy, { onLog, env });
+	}
 	return {
 		python: py,
 		venvDir,
 		venvPython: venvPy,
 		hasVenv: true,
-		canImportXhs: ok,
+		canImportXhs: okXhs,
+		canImportPlaywright: await canImportPlaywright(venvPy, env),
+		canImportVideoDeps: await canImportVideoDeps(venvPy, env),
 	};
 }
 
@@ -240,13 +343,17 @@ export async function getXhsEnvStatus(
 	const venvPy = resolveVenvPythonExecutable(venvDir);
 	const hasVenv = fs.existsSync(venvDir) && fs.existsSync(venvPy);
 	const py = await detectBestPython(pythonPathOverride);
-	const can = hasVenv ? await canImportXhs(venvPy) : false;
+	const canXhs = hasVenv ? await canImportXhs(venvPy) : false;
+	const canPw = hasVenv ? await canImportPlaywright(venvPy) : false;
+	const canVideo = hasVenv ? await canImportVideoDeps(venvPy) : false;
 	return {
 		python: py,
 		venvDir,
 		venvPython: venvPy,
 		hasVenv,
-		canImportXhs: can,
+		canImportXhs: canXhs,
+		canImportPlaywright: canPw,
+		canImportVideoDeps: canVideo,
 	};
 }
 

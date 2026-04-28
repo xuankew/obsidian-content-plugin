@@ -10,9 +10,11 @@ import type { MdToPlatformSettings } from "./settings";
 import type { MdToPlatformPlugin } from "./pluginTypes";
 import { getSessionCacheDir, readFileUtf8 } from "./cache";
 import {
+	getEffectiveWorkflowPathParts,
 	getSessionKey,
 	isWritingWorkflowLayout,
 	vaultRelPublishedGzhSession,
+	vaultRelPublishedVideoSession,
 	vaultRelPublishedXhsSession,
 	vaultRelSandboxSession,
 } from "./workflowPaths";
@@ -22,6 +24,8 @@ export const ARTIFACT_PUBLISH_GZH = "publish_gzh.md";
 export const ARTIFACT_PUBLISH_GZH_WITH_IMAGES = "publish_gzh_with_images.md";
 export const ARTIFACT_XHS_CONTENT = "xhs_content.md";
 export const ARTIFACT_PUBLISH_XHS = "publish_xhs.md";
+export const ARTIFACT_VIDEO_SCRIPT = "video_script.md";
+export const ARTIFACT_VIDEO_CONFIG = "video_config.json";
 
 /**
  * 读取已存在的带图公众号稿：优先 Sandbox/缓存工作目录，再 Published，再笔记同目录。
@@ -144,6 +148,45 @@ export async function writeExpandOutputs(
 	await writeVaultMarkdown(vault, normalizePath(`${pgzh}/${ARTIFACT_PUBLISH_GZH}`), publishGzh);
 	await writeVaultMarkdown(vault, normalizePath(`${pxhs}/${ARTIFACT_PUBLISH_XHS}`), publishXhs);
 	await writeVaultMarkdown(vault, normalizePath(`${pxhs}/${ARTIFACT_XHS_CONTENT}`), xhsContent);
+}
+
+/** 扩写阶段：视频脚本 Markdown + 机器可读 JSON（与 gzh/xhs 同会话键） */
+export async function writeVideoExpandOutputs(
+	plugin: MdToPlatformPlugin,
+	note: TFile,
+	videoScriptMd: string,
+	videoConfigJson: string,
+): Promise<void> {
+	const vault = plugin.app.vault;
+	const s = plugin.settings;
+	if (!isWritingWorkflowLayout(s)) {
+		await writeSiblingMarkdown(vault, note, ARTIFACT_VIDEO_SCRIPT, videoScriptMd);
+		await writeSiblingMarkdown(vault, note, ARTIFACT_VIDEO_CONFIG, videoConfigJson);
+		return;
+	}
+	const key = getSessionKey(note);
+	const sand = vaultRelSandboxSession(s, key);
+	const pvid = vaultRelPublishedVideoSession(s, key);
+	await writeVaultMarkdown(
+		vault,
+		normalizePath(`${sand}/${ARTIFACT_VIDEO_SCRIPT}`),
+		videoScriptMd,
+	);
+	await writeVaultMarkdown(
+		vault,
+		normalizePath(`${sand}/${ARTIFACT_VIDEO_CONFIG}`),
+		videoConfigJson,
+	);
+	await writeVaultMarkdown(
+		vault,
+		normalizePath(`${pvid}/${ARTIFACT_VIDEO_SCRIPT}`),
+		videoScriptMd,
+	);
+	await writeVaultMarkdown(
+		vault,
+		normalizePath(`${pvid}/${ARTIFACT_VIDEO_CONFIG}`),
+		videoConfigJson,
+	);
 }
 
 /** 公众号→小红书：仅更新小红书相关 md（终稿 + Sandbox tmp）。 */
@@ -323,6 +366,59 @@ export function getPublishXhsAbsPathWithFallback(
 	);
 }
 
+/** 供生成视频等使用：video_config.json 的绝对路径 */
+export function getVideoConfigAbsPathWithFallback(
+	plugin: MdToPlatformPlugin,
+	note: TFile,
+): string {
+	const s = plugin.settings;
+	const vault = plugin.app.vault;
+	const adapter = vault.adapter;
+	if (isWritingWorkflowLayout(s)) {
+		const key = getSessionKey(note);
+		for (const base of [
+			vaultRelPublishedVideoSession(s, key),
+			vaultRelSandboxSession(s, key),
+		]) {
+			const vp = normalizePath(`${base}/${ARTIFACT_VIDEO_CONFIG}`);
+			if (vault.getAbstractFileByPath(vp) instanceof TFile) {
+				if (adapter instanceof FileSystemAdapter) return adapter.getFullPath(vp);
+			}
+		}
+	}
+	const vp = siblingVaultPath(note, ARTIFACT_VIDEO_CONFIG);
+	if (vault.getAbstractFileByPath(vp) instanceof TFile) {
+		if (adapter instanceof FileSystemAdapter) return adapter.getFullPath(vp);
+	}
+	throw new Error(
+		"未找到 video_config.json：请先扩写并开启「扩写时同步视频脚本」或在工作流/同目录放置该文件",
+	);
+}
+
+/** 短视频产物目录（与 video_config 同级的库内绝对路径，用于落盘 .mp3/.mp4） */
+export function resolveVideoArtifactsFsDir(
+	plugin: MdToPlatformPlugin,
+	note: TFile,
+	settings: MdToPlatformSettings,
+): string {
+	const adapter = plugin.app.vault.adapter;
+	if (isWritingWorkflowLayout(settings)) {
+		const key = getSessionKey(note);
+		const rel = vaultRelPublishedVideoSession(settings, key);
+		if (adapter instanceof FileSystemAdapter) {
+			return adapter.getFullPath(rel);
+		}
+	}
+	if (adapter instanceof FileSystemAdapter) {
+		const p = note.parent?.path;
+		const rel = p
+			? normalizePath(`${p}`)
+			: "";
+		if (rel) return adapter.getFullPath(rel);
+	}
+	return path.dirname(getSessionCacheDir(plugin, note.path));
+}
+
 /** 小红书卡片 PNG 输出目录（绝对路径） */
 export function resolveXhsCardImagesFsDir(
 	plugin: MdToPlatformPlugin,
@@ -357,6 +453,70 @@ export function resolveXhsCardImagesFsDir(
 	const abs = adapter.getFullPath(vaultRel);
 	fs.mkdirSync(abs, { recursive: true });
 	return abs;
+}
+
+/**
+ * 短视频中段轮播用 `card_*.png` 所在目录的**候选**（仅路径；选中有卡片的第一个目录由
+ * `render_video.py` 处理）。绝对路径、去重、顺序固定：
+ * 1. 各 `02-Sanbox` / `02-Sandbox` 变体下 `…/xhs/<会话>/`（图文卡片常放于此）
+ * 2. `…/Sandbox/<会话>/`
+ * 3. `…/Sandbox/<会话>/xhs/`
+ * 4. `…/Published/xhs/<会话>/`（同「渲染/复用」输出位）
+ * 5. 当前「渲染/复用」传下来的目录（如 Published/xhs 或 .cache，与上可能重复会自然去重）
+ */
+export function listVideoCardImageDirCandidates(
+	plugin: MdToPlatformPlugin,
+	note: TFile,
+	renderImagesDir: string,
+): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const push = (abs: string) => {
+		const n = path.normalize(abs);
+		if (seen.has(n)) return;
+		seen.add(n);
+		out.push(n);
+	};
+
+	if (!isWritingWorkflowLayout(plugin.settings)) {
+		push(path.normalize(renderImagesDir));
+		return out;
+	}
+
+	const adapter = plugin.app.vault.adapter;
+	if (!(adapter instanceof FileSystemAdapter)) {
+		push(path.normalize(renderImagesDir));
+		return out;
+	}
+
+	const s = plugin.settings;
+	const key = getSessionKey(note);
+	const { workflowVaultRoot, folderSandbox } = getEffectiveWorkflowPathParts(s);
+
+	const sandNames = new Set([folderSandbox]);
+	if (folderSandbox === "02-Sanbox" || folderSandbox === "02-sanbox") {
+		sandNames.add("02-Sandbox");
+	}
+	if (folderSandbox === "02-Sandbox") {
+		sandNames.add("02-Sanbox");
+	}
+
+	for (const sand of sandNames) {
+		push(
+			adapter.getFullPath(
+				normalizePath(`${workflowVaultRoot}/${sand}/xhs/${key}`),
+			),
+		);
+	}
+	push(adapter.getFullPath(vaultRelSandboxSession(s, key)));
+	push(
+		adapter.getFullPath(
+			normalizePath(`${vaultRelSandboxSession(s, key)}/xhs`),
+		),
+	);
+	push(adapter.getFullPath(vaultRelPublishedXhsSession(s, key)));
+	push(path.normalize(renderImagesDir));
+	return out;
 }
 
 /**

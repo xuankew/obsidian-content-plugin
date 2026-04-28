@@ -8,15 +8,29 @@ import {
 	removeSandboxXhsMarkdownTmp,
 } from "../noteArtifacts";
 import {
+	getBundledPublishXhsPlaywrightPyPath,
 	getBundledPublishXhsRedbookPyPath,
 	getBundledXhsPipTargetPath,
 } from "../rulesLoader";
 import { runRenderXhsPipeline } from "./renderXhs";
 import { createPipelineProgressOverlay } from "../ui/pipelineProgress";
 import { pushXhsCardImagesToWechatNewspicDraft } from "./wechatXhsNewspicDraft";
-import { ensureXhsVenvInstalled, getXhsEnvStatus } from "../xhsEnv";
+import {
+	ensureXhsVenvInstalled,
+	getXhsEnvStatus,
+	type XhsEnvStatus,
+} from "../xhsEnv";
 
 const LOG_PFX = "[md-to-platform]";
+
+function bundledXhsDepsReady(
+	mode: "api" | "playwright",
+	st: XhsEnvStatus,
+): boolean {
+	if (!st.hasVenv) return false;
+	if (mode === "playwright") return st.canImportPlaywright;
+	return st.canImportXhs;
+}
 
 function quoteShArg(s: string): string {
 	if (!s) return s;
@@ -72,15 +86,26 @@ export async function runPublishXhsPipeline(
 		const custom = plugin.settings.xhsHelperCommand.trim();
 		let cmd = custom;
 		if (!cmd && plugin.settings.xhsUseBundledRedbookPublish) {
-			const scriptPath = getBundledPublishXhsRedbookPyPath(plugin);
+			const mode: "api" | "playwright" =
+				plugin.settings.xhsPublishMode === "playwright" ? "playwright" : "api";
+			const scriptPath =
+				mode === "playwright"
+					? getBundledPublishXhsPlaywrightPyPath(plugin)
+					: getBundledPublishXhsRedbookPyPath(plugin);
 			if (!scriptPath) {
-				throw new Error("未找到内置 publish_xhs_redbook.py：请重装/更新插件");
+				throw new Error(
+					mode === "playwright"
+						? "未找到内置 publish_xhs_playwright.py：请重装/更新插件"
+						: "未找到内置 publish_xhs_redbook.py：请重装/更新插件",
+				);
 			}
 			const status = await getXhsEnvStatus(plugin, plugin.settings.xhsPythonPath);
-			if (!status.hasVenv || !status.canImportXhs) {
+			if (!bundledXhsDepsReady(mode, status)) {
 				if (!plugin.settings.xhsAutoInstallDeps) {
 					throw new Error(
-						"小红书发布依赖未就绪：请到设置页点击「一键安装/修复发布依赖」，或开启「发布前自动安装依赖」",
+						mode === "playwright"
+							? "Playwright 发布依赖未就绪：请到设置页点击「一键安装/修复发布依赖」，或开启「发布前自动安装依赖」"
+							: "小红书发布依赖未就绪：请到设置页点击「一键安装/修复发布依赖」，或开启「发布前自动安装依赖」",
 					);
 				}
 				progress.setPhase("正在安装小红书发布依赖（首次/修复）…", 0.9, true);
@@ -91,8 +116,12 @@ export async function runPublishXhsPipeline(
 						onLog: (s) => console.info(`${LOG_PFX} xhs env`, s),
 					},
 				);
-				if (!installed.canImportXhs) {
-					throw new Error("已创建 venv 但仍无法 import xhs：请打开 Console 查看安装日志");
+				if (!bundledXhsDepsReady(mode, installed)) {
+					throw new Error(
+						mode === "playwright"
+							? "已安装但仍无法 import playwright：请打开 Console 查看（需联网 pip 与 optional chromium）"
+							: "已创建 venv 但仍无法 import xhs：请打开 Console 查看安装日志",
+					);
 				}
 				cmd = `${quoteShArg(installed.venvPython)} ${quoteShArg(scriptPath)}`;
 			} else {
@@ -137,6 +166,20 @@ export async function runPublishXhsPipeline(
 			env.MDT_XHS_COOKIE = plugin.settings.xhsCookie.trim();
 		}
 		env.MDT_XHS_AS_PRIVATE = plugin.settings.xhsPublishAsPrivate ? "1" : "0";
+		const pwProf =
+			plugin.settings.xhsPlaywrightProfileName.replace(/[/\\]/g, "").trim() ||
+			"default";
+		env.MDT_XHS_PLAYWRIGHT_PROFILE = pwProf;
+		env.MDT_XHS_PLAYWRIGHT_HEADED = plugin.settings.xhsPlaywrightHeaded ? "1" : "0";
+		env.MDT_XHS_PLAYWRIGHT_MANUAL_CLICK = plugin.settings.xhsPlaywrightManualFinalClick
+			? "1"
+			: "0";
+		env.MDT_XHS_PLAYWRIGHT_KEEP_OPEN = plugin.settings.xhsPlaywrightKeepOpenOnError
+			? "1"
+			: "0";
+		if (plugin.settings.debugLog) {
+			env.MDT_DEBUG = "1";
+		}
 
 		const xhsPipTgt = getBundledXhsPipTargetPath(plugin);
 		if (xhsPipTgt) {
