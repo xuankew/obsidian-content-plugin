@@ -4,3 +4,5 @@
 
 edge-tts>=6.1.0
 Pillow>=10.0.0
+# HTML/CSS 高品质首尾帧截图（可选）：pip install playwright && python -m playwright install chromium
+playwright>=1.40.0
